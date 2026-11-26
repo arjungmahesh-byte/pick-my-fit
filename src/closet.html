@@ -809,13 +809,13 @@ document.addEventListener("click", async e => {
       if(dr.sample){ toast("Samples can’t be changed. Add your own clothes instead."); return; }
       dr.saving = true; renderSheet();
       const data = {kind:"item", name:dr.name.slice(0,40), category:dr.category, shape:dr.category === "bottom" ? (dr.shape || "pants") : null, colors:(dr.colors||[]).map(okHex).filter(Boolean).slice(0,3), img:dr.img, fabric:dr.fabric || null, cutout:dr.cutout || null, created:dr.created || Date.now()};
-      try{ await store.put(dr.id, data); toast(dr.isNew ? `Added ${data.name}.` : "Saved."); closeSheet(); render(); }catch(_){ dr.saving = false; renderSheet(); }
+      try{ await store.put(dr.id, data); toast(dr.isNew ? `Added ${data.name}.` : "Saved."); if(dr.isNew) document.dispatchEvent(new CustomEvent("pmf:event", {detail:{type:"item_added"}})); closeSheet(); render(); }catch(_){ dr.saving = false; renderSheet(); }
       return;
     }
     if(d.sx === "delitem"){ const dr = sheet.draft; if(!dr.confirmDel){ dr.confirmDel = true; return renderSheet(); } await store.del(dr.id); closeSheet(); render(); toast("Deleted."); return; }
     if(d.sx === "wearitem"){ const dr = sheet.draft; S.sel[dr.category] = dr.id; if(dr.category === "dress"){ delete S.sel.top; delete S.sel.bottom; } if(dr.category==="top"||dr.category==="bottom") delete S.sel.dress; saveSel(); closeSheet(); setTab("outfit"); return; }
     if(d.sx === "savemodel"){ const p = {...sheet.draft}; if(sheet.meDirty && store.docs.me) await store.put("me", {...store.docs.me}); await store.put("profile", p); sheet.saved = true; closeSheet(); render(); toast("Your model is saved."); return; }
-    if(d.sx === "saveoutfit"){ const name = ($("#oname")?.value || "").trim() || "My outfit"; const id = uid("outfit"); await store.put(id, {kind:"outfit", name:name.slice(0,40), items:{...S.sel}, created:Date.now()}); closeSheet(); render(); toast(`Saved “${name}”.`); return; }
+    if(d.sx === "saveoutfit"){ const name = ($("#oname")?.value || "").trim() || "My outfit"; const id = uid("outfit"); await store.put(id, {kind:"outfit", name:name.slice(0,40), items:{...S.sel}, created:Date.now()}); closeSheet(); render(); toast(`Saved “${name}”.`); document.dispatchEvent(new CustomEvent("pmf:event", {detail:{type:"outfit_saved"}})); return; }
   }
   switch(d.act){
     case "add": $("#fileIn").value = ""; $("#fileIn").click(); break;
@@ -827,7 +827,7 @@ document.addEventListener("click", async e => {
       if(useDress) sel.dress = pick(by("dress")); else { sel.top = pick(by("top")); sel.bottom = pick(by("bottom")); }
       if(Math.random() < .5) sel.outer = pick(by("outer")); sel.shoes = pick(by("shoes"));
       for(const k in sel) if(!sel[k]) delete sel[k]; S.sel = sel; S.ai = null; saveSel(); render(); break; }
-    case "rate": aiRate(); break;
+    case "rate": aiRate(); document.dispatchEvent(new CustomEvent("pmf:event", {detail:{type:"ai_asked"}})); break;
     case "save": if(Object.keys(S.sel).length === 0){ toast("Pick some clothes first."); break; } sheet = {type:"name", name:""}; renderSheet(); setTimeout(() => $("#oname")?.focus(), 50); break;
     case "model": openModelSheet(); break;
     case "suggest": S.ask.occasion = $("#occ")?.value ?? S.ask.occasion; S.ask.weather = $("#wx")?.value ?? S.ask.weather; aiSuggest(); break;
