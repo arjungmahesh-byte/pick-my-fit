@@ -1,0 +1,7 @@
+{
+  "appId": "com.pickmyfit.app",
+  "appName": "Pick My Fit",
+  "webDir": "www",
+  "android": { "allowMixedContent": false },
+  "ios": { "contentInset": "never" }
+}

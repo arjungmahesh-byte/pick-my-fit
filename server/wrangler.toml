@@ -1,0 +1,8 @@
+name = "pick-my-fit-ai"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Secrets (set with `npx wrangler secret put NAME`, never written here):
+#   ANTHROPIC_API_KEY  your key from console.anthropic.com
+#   APP_KEY            any random text; put the same text in src/config.js -> appKey

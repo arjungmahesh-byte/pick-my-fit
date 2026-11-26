@@ -1,0 +1,10 @@
+node_modules/
+server/node_modules/
+server/.wrangler/
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+ios/App/build/
+ios/DerivedData/
+.DS_Store
