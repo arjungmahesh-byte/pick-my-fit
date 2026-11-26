@@ -1,0 +1,34 @@
+# Builds the iPhone app in the cloud (no Mac needed) and sends it to TestFlight / App Store Connect.
+# Setup steps: docs/APP_STORE.md
+workflows:
+  ios-testflight:
+    name: iPhone app to TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: PickMyFit App Store key   # name you give the API key in Codemagic
+    environment:
+      node: 22
+      xcode: latest
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.pickmyfit.app
+      vars:
+        APP_STORE_APPLE_ID: 0000000000   # replace with the Apple ID number of the app in App Store Connect
+    scripts:
+      - name: Build the web part
+        script: npm ci && npm run build && npx cap sync ios
+      - name: Use signing profiles
+        script: xcode-project use-profiles
+      - name: Set build number
+        script: |
+          cd ios/App
+          agvtool new-version -all $(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID") + 1))
+      - name: Build the iPhone app
+        script: xcode-project build-ipa --project "ios/App/App.xcodeproj" --scheme "App"
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true

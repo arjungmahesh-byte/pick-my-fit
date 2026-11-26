@@ -66,5 +66,11 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Pick My Fit uses the camera to take photos of your clothes and of you for the outfit preview.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Pick My Fit lets you choose photos of your clothes and of yourself from your library.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
