@@ -9,8 +9,8 @@ Clothes and photos are never uploaded. They stay on each phone.
 1. console.firebase.google.com: **Create a project** called `pick-my-fit` (Analytics off).
 2. **Build → Authentication → Get started → Sign-in method**: turn on **Email/Password** and **Anonymous** (Anonymous is used for nickname-only users).
 3. **Build → Firestore Database → Create database** in production mode.
-4. **Firestore → Rules**: paste the contents of `firestore.rules`, put your own email in place of `OWNER_EMAIL_HERE`, and tap **Publish**.
-5. **Project settings → Your apps → </>**: register a web app and copy the `firebaseConfig` values into `src/config.js` (`firebase: {...}`), and set `ownerEmail` to the same email.
+4. **Firestore → Rules**: paste the contents of `firestore.rules`, put your own email in place of `OWNER_EMAIL_HERE`, and tap **Publish**. (Your email stays only in the console; the app finds out you are the owner by asking Firestore.)
+5. **Project settings → Your apps → </>**: register a web app and copy the `firebaseConfig` values into `src/config.js` (`firebase: {...}`). Leave `ownerEmail` empty.
 6. Open the app and choose **Sign in with email instead → Create account** with that email. You'll then see **My users**.
 7. **Authentication → Settings → Authorized domains**: add `arjungmahesh-byte.github.io` so the iPhone web app can sign in.
 

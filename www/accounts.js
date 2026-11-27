@@ -29,7 +29,7 @@
     gateEl.hidden = false;
     gateEl.innerHTML = `<div class="in">
       <h1>Pick My <span>Fit</span></h1>
-      <p class="muted" style="margin:0">Snap your clothes, build outfits and see them on you.</p>
+      <p class="muted" style="margin:0">Snap your clothes, add shop finds and build outfits.</p>
       <div class="field"><label for="g-nick">Your name or nickname</label><input id="g-nick" maxlength="30" placeholder="e.g. Sam" autocomplete="nickname"></div>
       ${mode === "email" ? `
         <div class="field"><label for="g-email">Email</label><input id="g-email" type="email" autocomplete="email" inputmode="email"></div>
@@ -87,7 +87,9 @@
     const sync = document.getElementById("sync"); if (sync) sync.hidden = true;
   }
   async function sheet(){
-    const isOwner = me && me.email && me.email.toLowerCase() === owner;
+    let isOwner = !!(me && me.email && owner && me.email.toLowerCase() === owner);
+    // no email in the code: the rules only let the owner list everyone, so try it
+    if (!isOwner && !owner && me && me.email){ try { await db.collection("users").limit(1).get(); isOwner = true; } catch (_) {} }
     let bg = document.createElement("div"); bg.className = "sheet-bg"; document.body.append(bg);
     bg.addEventListener("click", e => { if (e.target === bg) bg.remove(); });
     const draw = (inner) => bg.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="stack">
