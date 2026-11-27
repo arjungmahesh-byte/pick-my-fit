@@ -1,6 +1,7 @@
 // Pick My Fit shop-link helper (Cloudflare Worker, free plan).
 // The iPhone website can't read shop pages directly (browsers block it), so it asks this helper.
 // Paste this whole file into a Cloudflare Worker and press Deploy. Nothing else to set up.
+// Optional: add a secret named SCRAPER_KEY (a ScraperAPI key) so shops that block Cloudflare (Max, Zara, H&M, SHEIN) work too.
 
 const ALLOWED_ORIGINS = [
   "https://arjungmahesh-byte.github.io",
@@ -52,6 +53,31 @@ function toBase64(buf) {
   return btoa(s);
 }
 
+function blocked(status, text) {
+  if (status === 403 || status === 429 || status === 503 || status >= 520) return true;
+  return text.length < 20000 && /bm-verify|__cf_chl|Just a moment|Access Denied|captcha|challenge-platform/i.test(text);
+}
+
+async function viaScraper(u, binary, key) {
+  const api = "https://api.scraperapi.com/?api_key=" + encodeURIComponent(key) + "&country_code=ae&url=" + encodeURIComponent(u.href);
+  const r = await fetch(api);
+  const buf = await r.arrayBuffer();
+  if (buf.byteLength > MAX_BYTES) throw new Error("too big");
+  const contentType = r.headers.get("content-type") || "";
+  const isText = !binary && /text|html|json|xml/i.test(contentType || "text/html");
+  return { status: r.status, contentType, url: u.href, via: "scraper", body: isText ? new TextDecoder().decode(buf) : toBase64(buf) };
+}
+
+async function grabOrRetry(u, binary, env) {
+  const first = await grab(u, binary).catch(e => ({ status: 599, contentType: "", url: u.href, body: "", err: String(e && e.message || e) }));
+  const key = env && env.SCRAPER_KEY;
+  if (key && !binary && blocked(first.status, first.body)) {
+    try { const second = await viaScraper(new URL(first.url), binary, key); if (second.status < 400) return second; } catch (_) {}
+  }
+  if (first.err) throw new Error(first.err);
+  return first;
+}
+
 async function grab(start, binary) {
   let u = start;
   for (let hop = 0; hop < 10; hop++) {
@@ -88,7 +114,7 @@ async function grab(start, binary) {
 }
 
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const origin = request.headers.get("origin") || "";
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(origin) });
     const path = new URL(request.url).pathname.replace(/\/+$/, "");
@@ -100,7 +126,7 @@ export default {
     const u = safeUrl(body && body.url);
     if (!u) return json({ error: "bad url" }, 400, origin);
     try {
-      return json(await grab(u, !!body.binary), 200, origin);
+      return json(await grabOrRetry(u, !!body.binary, env), 200, origin);
     } catch (e) {
       return json({ error: String(e && e.message || e) }, 502, origin);
     }
