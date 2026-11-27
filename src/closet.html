@@ -797,6 +797,17 @@ let pendingPhoto = null;
 function safeUrl(u){ try{ const x = new URL(String(u || "").trim()); return /^https?:$/.test(x.protocol) ? x.href : null; }catch(_){ return null; } }
 function shopName(u){ try{ const h = new URL(u).hostname.replace(/^(www|m|ae|sa|qa|kw|bh|om|en|ar)\./, ""); const b = h.split(".")[0];
   return ({trendyol:"Trendyol", maxfashion:"Max", "ty":"Trendyol", namshi:"Namshi", zara:"Zara", hm:"H&M", shein:"SHEIN", noon:"noon", amazon:"Amazon"})[b] || (b[0].toUpperCase() + b.slice(1)); }catch(_){ return ""; } }
+// read the product name and brand from the link itself, e.g. trendyol.ae/trendyol-collection/dark-brown-oversized-shirt-p-123
+function guessFromUrl(u){
+  try{ const segs = new URL(u).pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const nice = t => t.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/^./, c => c.toUpperCase());
+    let i = segs.findIndex(x => /-p-\d+/.test(x)); if(i < 0){ let best = -1; segs.forEach((x, j) => { if(x.split("-").length > 2 && (best < 0 || x.length > segs[best].length)) best = j; }); i = best; }
+    if(i < 0) return {};
+    const name = nice(segs[i].replace(/^buy-/i, "").replace(/-p-\d+.*$/, "").replace(/[-_]?\d{5,}.*$/, "")).slice(0, 40);
+    const brand = i > 0 && !/^(en|ar|ae|sa|[a-z]{2}-[a-z]{2}|product|products|p|shop|buy)$/i.test(segs[i-1]) ? nice(segs[i-1]).slice(0, 30) : "";
+    return {name, brand};
+  }catch(_){ return {}; }
+}
 const UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36";
 function nativeHttp(){ const C = window.Capacitor; return C && C.isNativePlatform && C.isNativePlatform() && C.Plugins && C.Plugins.CapacitorHttp; }
 function helperUrl(){ const c = window.PICKMYFIT_CONFIG; return c && c.aiUrl ? c.aiUrl.replace(/\/+$/, "") + "/fetch" : null; }
@@ -846,7 +857,8 @@ async function getFromLink(){
     else { sheet = null; renderSheet(); await onPhoto(blob, extra); }
   }catch(e){
     if(sheet !== s0) return;
-    s0.busy = false; s0.err = "I couldn’t open that shop page from the app. No problem: take a screenshot of the product photo in the shop app, then choose it here. I’ll keep the link and cut the item out.";
+    s0.busy = false; s0.err = nativeHttp() ? "That shop didn’t let the app read its page. No problem: take a screenshot of the product photo, then choose it here. I’ll fill in the name and link and cut the item out."
+      : "Shops don’t let the website version read their pages (the Android app can). No problem: take a screenshot of the product photo, then choose it here. I’ll fill in the name and link and cut the item out.";
     renderSheet();
   }
 }
@@ -885,7 +897,7 @@ document.addEventListener("click", async e => {
   if(d.sx){
     if(d.sx === "close"){ closeSheet(); return; }
     if(d.sx === "getlink"){ getFromLink(); return; }
-    if(d.sx === "linkshot"){ pendingPhoto = {forId:sheet.forId, extra:{toBuy:true, link:safeUrl(sheet.url) || "", shop:shopName(sheet.url)}}; $("#fileIn").value = ""; $("#fileIn").click(); return; }
+    if(d.sx === "linkshot"){ pendingPhoto = {forId:sheet.forId, extra:{toBuy:true, link:safeUrl(sheet.url) || "", shop:shopName(sheet.url), ...guessFromUrl(sheet.url)}}; $("#fileIn").value = ""; $("#fileIn").click(); return; }
     if(d.sx === "shopphoto"){ const dr = sheet.draft; sheet = {type:"link", forId:dr.id, url:dr.link || ""}; renderSheet(); return; }
     if(d.sx === "saveitem"){
       const dr = sheet.draft; dr.name = ($("#iname")?.value || "").trim() || `${colorName(dr.colors[0] || "#888")} ${catLabel(dr.category).toLowerCase()}`;
