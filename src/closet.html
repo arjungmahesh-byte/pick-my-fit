@@ -857,8 +857,8 @@ function guessFromUrl(u){
 }
 const UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36";
 function nativeHttp(){ const C = window.Capacitor; return C && C.isNativePlatform && C.isNativePlatform() && C.Plugins && C.Plugins.CapacitorHttp; }
-function helperUrl(){ const c = window.PICKMYFIT_CONFIG; return c && c.aiUrl ? c.aiUrl.replace(/\/+$/, "") + "/fetch" : null; }
-async function helperFetch(url, binary){ const c = window.PICKMYFIT_CONFIG; const r = await fetch(helperUrl(), {method:"POST", headers:{"content-type":"application/json", "x-app-key": c.appKey || ""}, body:JSON.stringify({url, binary})}); if(!r.ok) throw new Error("helper " + r.status); return r.json(); }
+function helperUrl(){ const c = window.PICKMYFIT_CONFIG; if(c && c.fetchUrl) return c.fetchUrl; return c && c.aiUrl ? c.aiUrl.replace(/\/+$/, "") + "/fetch" : null; }
+async function helperFetch(url, binary){ const c = window.PICKMYFIT_CONFIG; const r = await fetch(helperUrl(), {method:"POST", headers:{"content-type":"application/json", "x-app-key": c.appKey || ""}, body:JSON.stringify({url, binary})}); if(!r.ok) throw new Error("helper " + r.status); const j = await r.json(); if(j.status >= 400) throw new Error("page " + j.status); return j; }
 /* share links (ty.gl, app.link, adj.st, bit.ly…) bounce through trackers that jump into the shop's app.
    Walk the redirects one by one and pull the real web address out of them. */
 const WRAP_KEYS = ["adjust_redirect", "adj_redirect", "redirect", "redirect_url", "redirectUrl", "redirect_uri", "url", "u", "target", "link", "dest", "destination", "fallback_url", "$fallback_url", "$desktop_url", "$android_url", "af_web_dp", "deep_link_value", "web_url"];

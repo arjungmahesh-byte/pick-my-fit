@@ -3,6 +3,8 @@
 window.PICKMYFIT_CONFIG = {
   aiUrl: "",
   appKey: "",
+  // fetchUrl: the free shop-link helper (server/helper-worker.js on Cloudflare). Lets the iPhone website read shop pages.
+  fetchUrl: "https://pickmyfit-helper.arjungmahesh.workers.dev/fetch",
   // firebase: paste the firebaseConfig object from the Firebase console here to turn on accounts.
   firebase: {
     apiKey: "AIzaSyB_292XWrwnDKXxS74XkWvJzIFBq7a9bYw",
