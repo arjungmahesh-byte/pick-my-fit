@@ -17,10 +17,10 @@ android {
         }
     }
     // One fixed key for every build, so new versions install over old ones.
-    // The key file is in the repo; its password lives only in the GitHub secret ANDROID_KEY_PASSWORD.
+    // The build makes the key once (locked with the GitHub secret ANDROID_KEY_PASSWORD) and saves it in the repo.
     signingConfigs {
         fixed {
-            storeFile file("pickmyfit.jks")
+            storeFile file("pickmyfit-signing.p12")
             storePassword System.getenv("PMF_KEY_PASS") ?: ""
             keyAlias "pickmyfit"
             keyPassword System.getenv("PMF_KEY_PASS") ?: ""
@@ -28,7 +28,7 @@ android {
     }
     buildTypes {
         debug {
-            if (System.getenv("PMF_KEY_PASS")) signingConfig signingConfigs.fixed
+            if (System.getenv("PMF_KEY_PASS") && file("pickmyfit-signing.p12").exists()) signingConfig signingConfigs.fixed
         }
         release {
             minifyEnabled false
