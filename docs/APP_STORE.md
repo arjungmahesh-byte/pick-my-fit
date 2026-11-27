@@ -17,7 +17,7 @@ Total cost: **$99 a year** (Apple). Codemagic's free plan covers the builds (abo
 
 ## 3. Let Codemagic build it (10 minutes)
 1. In App Store Connect, go to **Users and Access**, then **Integrations**, then **App Store Connect API**, and create a key with the **App Manager** role. Download the .p8 file once.
-2. Sign up free at codemagic.io with your GitHub account and add the **pick-my-fit.** repository.
+2. Sign up free at codemagic.io with your GitHub account and add the **pick-my-fit** repository.
 3. Go to **Team settings**, then **Integrations**, then **Developer Portal**, then **Connect**. Name it `PickMyFit App Store key` and upload the .p8 file with its Issuer ID and Key ID.
 4. Under **Code signing identities**, let Codemagic create an iOS Distribution certificate and an App Store profile for com.pickmyfit.app.
 5. Start the **iPhone app to TestFlight** workflow.
