@@ -33,6 +33,7 @@ fs.mkdirSync("www/icons", {recursive:true});
 fs.mkdirSync("www/vendor", {recursive:true});
 for(const f of ["firebase-app-compat.js", "firebase-auth-compat.js", "firebase-firestore-compat.js"]) fs.copyFileSync("node_modules/firebase/" + f, "www/vendor/" + f);
 for(const f of fs.readdirSync("src/icons")) fs.copyFileSync("src/icons/" + f, "www/icons/" + f);
+fs.mkdirSync("www/get", {recursive:true}); fs.copyFileSync("src/get.html", "www/get/index.html");   // short share link: /get/
 fs.writeFileSync("www/version.js", `window.PMF_BUILD = ${Number(process.env.BUILD_NUM) || 0};\n`);
 fs.mkdirSync("www/vendor/ml", {recursive:true});
 for(const f of ["ort.wasm.min.js", "ort-wasm-simd-threaded.wasm", "ort-wasm-simd-threaded.mjs"]) fs.copyFileSync("node_modules/onnxruntime-web/dist/" + f, "www/vendor/ml/" + f);

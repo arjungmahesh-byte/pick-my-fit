@@ -8,22 +8,9 @@ service cloud.firestore {
     function fieldsOk() {
       return request.resource.data.keys().hasOnly(['nickname','email','joined','lastSeen','opens','platform','invite','count_item_added','count_outfit_saved','count_ai_asked']);
     }
-    function goodInvite(code) {
-      return code is string && exists(/databases/$(database)/documents/invites/$(code))
-        && get(/databases/$(database)/documents/invites/$(code)).data.revoked != true;
-    }
-    // Invite codes: only the owner makes, lists and stops them; anyone signing up can check one code.
-    match /invites/{code} {
-      allow get: if request.auth != null;
-      allow list, create, update, delete: if isOwner();
-    }
     match /users/{uid} {
       allow read: if isOwner() || (request.auth != null && request.auth.uid == uid);
-      // joining needs a working invite code (the owner doesn't)
-      allow create: if request.auth != null && request.auth.uid == uid && fieldsOk()
-        && (isOwner() || goodInvite(request.resource.data.get('invite', null)));
-      allow update: if request.auth != null && request.auth.uid == uid && fieldsOk()
-        && request.resource.data.get('invite', null) == resource.data.get('invite', null);
+      allow create, update: if request.auth != null && request.auth.uid == uid && fieldsOk();
       allow delete: if isOwner() || (request.auth != null && request.auth.uid == uid);
     }
   }
