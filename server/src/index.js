@@ -18,6 +18,7 @@ export default {
 
     let body;
     try { body = await request.json(); } catch { return json({error: "bad json"}, 400); }
+    if (new URL(request.url).pathname.endsWith("/fetch")) return fetchForApp(body);
     const prompt = String(body.prompt || "").slice(0, 60000);
     if (!prompt) return json({error: "empty prompt"}, 400);
     const images = Array.isArray(body.images) ? body.images.slice(0, MAX_IMAGES) : [];
@@ -51,3 +52,24 @@ export default {
     }
   },
 };
+
+// Shop links: the phone can't read most shop pages directly (browsers block it), so this
+// fetches a product page or its photo and hands it back. Only public http(s) pages, max 6 MB.
+async function fetchForApp(body) {
+  let url;
+  try { url = new URL(String(body.url || "")); } catch { return json({error: "bad url"}, 400); }
+  if (!/^https?:$/.test(url.protocol) || /^(localhost|127\.|10\.|192\.168\.|169\.254\.)/.test(url.hostname)) return json({error: "bad url"}, 400);
+  const res = await fetch(url.href, {redirect: "follow", headers: {
+    "user-agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36",
+    "accept": body.binary ? "image/*" : "text/html,application/xhtml+xml", "accept-language": "en-US,en;q=0.8"}});
+  if (!res.ok) return json({error: "shop said " + res.status}, 502);
+  const type = (res.headers.get("content-type") || "").split(";")[0];
+  const buf = new Uint8Array(await res.arrayBuffer());
+  if (buf.length > 6_000_000) return json({error: "too big"}, 413);
+  if (body.binary) {
+    if (!type.startsWith("image/")) return json({error: "not an image"}, 415);
+    let s = ""; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return json({contentType: type, body: btoa(s), url: res.url});
+  }
+  return json({contentType: type, body: new TextDecoder().decode(buf), url: res.url});
+}

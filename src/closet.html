@@ -58,6 +58,17 @@ h3{font-family:var(--display);font-weight:700;font-size:1rem;margin:0}
 .card .sample{position:absolute;top:6px;left:6px;background:rgba(0,0,0,.55);color:#fff;font-size:.62rem;letter-spacing:.06em;text-transform:uppercase;border-radius:6px;padding:2px 6px}
 .add-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;aspect-ratio:3/4;border:2px dashed var(--line);border-radius:14px;background:transparent;color:var(--muted);font-weight:700;font-size:.85rem}
 .add-tile b{font-size:1.8rem;line-height:1;color:var(--accent)}
+.add-tile svg{color:var(--accent)}
+.card .buy,.strip .buy{position:absolute;top:6px;right:6px;background:#b4442a;color:#fff;font-size:.62rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;border-radius:6px;padding:2px 6px}
+.strip button{position:relative}
+.stage.collage{padding:0;overflow:hidden;background:#e7e2da}
+.ocard svg{border-radius:12px}
+.toggle{display:flex;align-items:center;gap:10px;background:var(--panel);border:1.5px solid var(--line);border-radius:14px;padding:10px 12px}
+.toggle input{width:22px;height:22px;accent-color:var(--accent)}
+.note{background:var(--panel);border-left:4px solid #b4442a;border-radius:10px;padding:10px 12px;font-size:.85rem}
+.builder.wide{grid-template-columns:1fr}
+.builder.wide .stage{max-width:440px;width:100%;margin:0 auto}
+.builder.wide .slots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
 .swatches{display:flex;gap:4px}
 .sw{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--line);flex:none}
 /* outfit builder */
@@ -129,7 +140,6 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 </div></nav>
 
 <input type="file" id="fileIn" accept="image/*" hidden>
-<input type="file" id="meIn" accept="image/*" hidden>
 
 <script>
 (() => {
@@ -262,7 +272,19 @@ function cleanPhoto(img){
   const big = Math.max(0, ...sizes); const keep = sizes.map(sz => sz >= Math.max(30, big*.15));
   let fg=0, x0=W, y0=H, x1=0, y1=0; const alpha = new Uint8ClampedArray(N);
   for(let i=0;i<N;i++){ if(!bg[i] && keep[lab[i]]){ alpha[i]=255; fg++; const x=i%W, y=(i-x)/W; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
-  const frac = fg/N; const cut = frac > .04 && frac < .93;
+  let frac = fg/N; let cut = frac > .04 && frac < .93;
+  // busy background (bed cover, patterned floor): fall back to "the thing in the middle" segmentation
+  if(!cut){ const m = centerSeg(d, W, H); if(m){ fg=0; x0=W; y0=H; x1=0; y1=0;
+    for(let i=0;i<N;i++){ alpha[i] = m[i] ? 255 : 0; if(m[i]){ fg++; const x=i%W, y=(i-x)/W; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
+    frac = fg/N; cut = frac > .04 && frac < .93; } }
+  // 3b. remove thin threads and specks along the edge (open: shrink 2px, grow 2px)
+  if(cut){ const A = new Uint8Array(N); for(let i=0;i<N;i++) A[i] = alpha[i] ? 1 : 0;
+    const morph = (src, grow) => { const o = src.slice(); for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){ const i=y*W+x, nb = src[i-1]+src[i+1]+src[i-W]+src[i+W];
+      if(grow){ if(!src[i] && nb) o[i] = 1; } else if(src[i] && nb < 4) o[i] = 0; } return o; };
+    let m2 = morph(morph(A, false), false); m2 = morph(morph(m2, true), true);
+    fg = 0; x0=W; y0=H; x1=0; y1=0;
+    for(let i=0;i<N;i++){ alpha[i] = m2[i] && A[i] ? 255 : 0; if(alpha[i]){ fg++; const x=i%W, y=(i-x)/W; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
+    if(fg < N*.03) cut = false; }
   // 4. soften the cut edge a little
   if(cut){ const a2 = alpha.slice(); for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){ const i=y*W+x; if(!alpha[i]) continue; const nb = alpha[i-1]+alpha[i+1]+alpha[i-W]+alpha[i+W]; if(nb < 1020) a2[i] = 150; } alpha.set(a2); }
   else { alpha.fill(255); x0=0; y0=0; x1=W-1; y1=H-1; }
@@ -297,102 +319,93 @@ function cleanPhoto(img){
   return {img: out.toDataURL("image/jpeg", .82), fabric: fab.toDataURL("image/jpeg", .8), cutout, colors: colors.length ? colors : ["#888888"], cut, box:{x0:x0/W, y0:y0/H, x1:(x1+1)/W, y1:(y1+1)/H}};
 }
 
+function kmeans(pts, k){
+  let cs = Array.from({length:k}, (_,i) => pts[Math.floor((i+.5)*pts.length/k)].slice()); let cnt = [];
+  for(let it=0; it<8; it++){
+    const acc = cs.map(() => [0,0,0,0]);
+    for(const p of pts){ let bi=0, bd=1e9; for(let i=0;i<k;i++){ const c=cs[i]; const dd=(p[0]-c[0])**2+(p[1]-c[1])**2+(p[2]-c[2])**2; if(dd<bd){bd=dd;bi=i;} } const a=acc[bi]; a[0]+=p[0]; a[1]+=p[1]; a[2]+=p[2]; a[3]++; }
+    cs = acc.map((a,i) => a[3] ? [a[0]/a[3],a[1]/a[3],a[2]/a[3]] : cs[i]); cnt = acc.map(a => a[3]);
+  }
+  return cs.filter((c,i) => cnt[i] > pts.length*.05);
+}
+function centerSeg(d, W, H){
+  const N = W*H, ring = [], mid = [], R = Math.max(3, Math.round(Math.min(W,H)*.07));
+  for(let y=0;y<H;y+=2) for(let x=0;x<W;x+=2){ const k=(y*W+x)*4, p=[d[k],d[k+1],d[k+2]];
+    if(x<R||y<R||x>=W-R||y>=H-R) ring.push(p); else if(Math.abs(x-W/2)<W*.13 && Math.abs(y-H/2)<H*.16) mid.push(p); }
+  if(ring.length < 20 || mid.length < 20) return null;
+  const bgC = kmeans(ring, 6), fgAll = kmeans(mid, 3);
+  const near = (c, list, t) => list.some(b => (c[0]-b[0])**2+(c[1]-b[1])**2+(c[2]-b[2])**2 < t*t);
+  const fgC = fgAll.filter(c => !near(c, bgC, 34));
+  if(!fgC.length) return null;
+  let m = new Uint8Array(N);
+  for(let i=0;i<N;i++){ const k=i*4; let f=1e9, b=1e9;
+    for(const c of fgC){ const dd=(d[k]-c[0])**2+(d[k+1]-c[1])**2+(d[k+2]-c[2])**2; if(dd<f) f=dd; }
+    for(const c of bgC){ const dd=(d[k]-c[0])**2+(d[k+1]-c[1])**2+(d[k+2]-c[2])**2; if(dd<b) b=dd; }
+    m[i] = f < b*.85 ? 1 : 0; }
+  // smooth with a 7x7 majority vote, twice (removes speckles from patterns)
+  const r = 3, S = new Int32Array((W+1)*(H+1));
+  for(let pass=0; pass<2; pass++){
+    for(let y=0;y<H;y++){ let row=0; for(let x=0;x<W;x++){ row += m[y*W+x]; S[(y+1)*(W+1)+x+1] = S[y*(W+1)+x+1] + row; } }
+    const o = new Uint8Array(N);
+    for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const ax=Math.max(0,x-r), ay=Math.max(0,y-r), bx=Math.min(W,x+r+1), by=Math.min(H,y+r+1);
+      const sum = S[by*(W+1)+bx]-S[ay*(W+1)+bx]-S[by*(W+1)+ax]+S[ay*(W+1)+ax]; o[y*W+x] = sum*2 > (bx-ax)*(by-ay) ? 1 : 0; }
+    m = o; }
+  // keep the piece that sits in the middle of the photo
+  const lab = new Int32Array(N), q = new Int32Array(N); let best = 0, bestSz = 0, n = 0;
+  for(let y=Math.floor(H*.3); y<H*.7; y+=3) for(let x=Math.floor(W*.3); x<W*.7; x+=3){ const s = y*W+x; if(!m[s] || lab[s]) continue;
+    n++; let qh=0, qt=0, sz=0; q[qt++]=s; lab[s]=n;
+    while(qh<qt){ const j=q[qh++]; sz++; const jx=j%W, jy=(j-jx)/W; for(const nb of [jx>0?j-1:-1, jx<W-1?j+1:-1, jy>0?j-W:-1, jy<H-1?j+W:-1]) if(nb>=0 && m[nb] && !lab[nb]){ lab[nb]=n; q[qt++]=nb; } }
+    if(sz > bestSz){ bestSz = sz; best = n; } }
+  if(!best) return null;
+  const out = new Uint8Array(N); for(let i=0;i<N;i++) out[i] = lab[i] === best ? 1 : 0;
+  // fill holes inside the garment
+  const seen = new Uint8Array(N); let qh=0, qt=0;
+  for(let x=0;x<W;x++) for(const y of [0,H-1]){ const i=y*W+x; if(!out[i] && !seen[i]){ seen[i]=1; q[qt++]=i; } }
+  for(let y=0;y<H;y++) for(const x of [0,W-1]){ const i=y*W+x; if(!out[i] && !seen[i]){ seen[i]=1; q[qt++]=i; } }
+  while(qh<qt){ const j=q[qh++], jx=j%W, jy=(j-jx)/W; for(const nb of [jx>0?j-1:-1, jx<W-1?j+1:-1, jy>0?j-W:-1, jy<H-1?j+W:-1]) if(nb>=0 && !out[nb] && !seen[nb]){ seen[nb]=1; q[qt++]=nb; } }
+  for(let i=0;i<N;i++) if(!out[i] && !seen[i]) out[i] = 1;
+  // trim the edge a little so no background fringe is left
+  for(let pass=0; pass<2; pass++){ const o2 = out.slice(); for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){ const i=y*W+x; if(out[i] && (!out[i-1] || !out[i+1] || !out[i-W] || !out[i+W])) o2[i] = 0; } out.set(o2); }
+  return out;
+}
+
 /* items saved before cutouts existed (and the samples): key out the flat card color at view time */
 const cutCache = new Map();
+let redrawT = null;
+function redraw(){ clearTimeout(redrawT); redrawT = setTimeout(() => { render(); if(sheet && sheet.type !== "item") renderSheet(); }, 30); }
 function cutoutFor(item){
   if(!item) return null; if(item.cutout) return item.cutout;
   const key = item.id + ":" + (item.img||"").length; const c = cutCache.get(key);
-  if(c !== undefined) return c === "pending" ? null : c;
+  if(c !== undefined) return c === "pending" || c === "none" ? null : c;
   cutCache.set(key, "pending");
-  loadImg(item.img).then(img => {
-    const W = img.naturalWidth, H = img.naturalHeight; const cv = document.createElement("canvas"); cv.width = W; cv.height = H; const x = cv.getContext("2d", {willReadFrequently:true});
-    x.drawImage(img,0,0); const id = x.getImageData(0,0,W,H), d = id.data; const b = [d[0],d[1],d[2]];
-    let x0=W,y0=H,x1=0,y1=0;
-    for(let i=0;i<W*H;i++){ const k=i*4; const dist = Math.hypot(d[k]-b[0], d[k+1]-b[1], d[k+2]-b[2]); if(dist < 26) d[k+3] = 0; else { if(dist < 40) d[k+3] = 120; const px=i%W, py=(i-px)/W; if(px<x0)x0=px; if(px>x1)x1=px; if(py<y0)y0=py; if(py>y1)y1=py; } }
-    x.putImageData(id,0,0); if(x1<=x0||y1<=y0){ cutCache.set(key, item.img); return; }
-    const o = document.createElement("canvas"); o.width = x1-x0+1; o.height = y1-y0+1; o.getContext("2d").drawImage(cv, x0,y0,o.width,o.height, 0,0,o.width,o.height);
-    cutCache.set(key, o.toDataURL("image/png")); render(); if(sheet && sheet.type === "model") renderSheet();
-  }).catch(() => cutCache.set(key, item.img));
+  loadImg(item.img).then(img => { let cl = null; try{ cl = cleanPhoto(img); }catch(_){}
+    cutCache.set(key, cl && cl.cut && cl.cutout ? cl.cutout : "none"); redraw();
+  }).catch(() => cutCache.set(key, "none"));
   return null;
 }
-
-/* where the clothes go on a photo of you */
-function defaultPts(box){
-  const b = box || {x0:.3,y0:.05,x1:.7,y1:.97}; const h = b.y1-b.y0, cx = (b.x0+b.x1)/2;
-  return {sl:[cx-.115*h*(4/3)*.75, b.y0+.19*h], sr:[cx+.115*h*(4/3)*.75, b.y0+.19*h], waist:[cx, b.y0+.5*h], feet:[cx, b.y0+.97*h]};
+/* shape of a cutout: aspect ratio, and how wide it is at each height (ignoring loose sleeves) */
+const infoCache = new Map();
+function garmentInfo(url){
+  if(!url) return null; const c = infoCache.get(url); if(c) return c === "pending" ? null : c;
+  infoCache.set(url, "pending");
+  loadImg(url).then(img => {
+    const W = img.naturalWidth, H = img.naturalHeight, s = Math.min(1, 200/Math.max(W,H)), w = Math.max(2, Math.round(W*s)), h = Math.max(2, Math.round(H*s));
+    const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const x = cv.getContext("2d", {willReadFrequently:true}); x.drawImage(img, 0, 0, w, h);
+    const d = x.getImageData(0,0,w,h).data; const on = (px,py) => d[(py*w+px)*4+3] > 100;
+    const rows = []; const gap = Math.max(2, Math.round(w*.03));
+    for(let r=0;r<=40;r++){ const py = Math.min(h-1, Math.round(r/40*(h-1)));
+      let lo = -1, hi = -1; for(let px=0;px<w;px++) if(on(px,py)){ if(lo<0) lo=px; hi=px; }
+      if(lo < 0){ rows.push({w:0, c:.5}); continue; }
+      let cx = Math.round(w/2); if(!on(cx,py)){ let best=-1; for(let k=1;k<w/2;k++){ if(cx-k>=0&&on(cx-k,py)){best=cx-k;break;} if(cx+k<w&&on(cx+k,py)){best=cx+k;break;} } cx = best < 0 ? Math.round((lo+hi)/2) : best; }
+      let a = cx, b = cx, miss = 0; while(a>0){ if(on(a-1,py)){ a--; miss=0; } else if(++miss <= gap) a--; else break; } a += 0;
+      miss = 0; while(b<w-1){ if(on(b+1,py)){ b++; miss=0; } else if(++miss <= gap) b++; else break; }
+      let run = b-a+1, mid = (a+b)/2; if(run < (hi-lo+1)*.35){ run = hi-lo+1; mid = (lo+hi)/2; }
+      rows.push({w:run/w, c:mid/w}); }
+    const at = f => { const i = Math.max(0, Math.min(40, Math.round(f*40))); const sel = rows.slice(Math.max(0,i-1), i+2).filter(r => r.w); return sel.length ? {w: sel.reduce((t,r)=>t+r.w,0)/sel.length, c: sel.reduce((t,r)=>t+r.c,0)/sel.length} : {w:1, c:.5}; };
+    infoCache.set(url, {ar: W/H, at}); redraw();
+  }).catch(() => infoCache.set(url, {ar:.75, at:() => ({w:1,c:.5})}));
+  return null;
 }
-async function aiBodyPts(photo){
-  const s = await getSample(); if(!s) return null; const lim = await s.limits().catch(() => null); if(!lim?.images) return null;
-  const r = await s.json(`This is a full-body photo of a person standing, used to dress them in clothes in a wardrobe app.
-Give the positions as fractions of the image (x from left 0 to 1, y from top 0 to 1).
-Reply with only JSON: {"sl":[x,y],"sr":[x,y],"waist":[x,y],"feet":[x,y]}
-- sl: the shoulder joint on the LEFT side of the image; sr: the shoulder joint on the RIGHT side of the image.
-- waist: middle of the body at belt / top-of-hips height.
-- feet: halfway between the two ankles.`, {images:[await dataUrlToBlob(photo)], modelTier:"default"});
-  const ok = v => Array.isArray(v) && v.length === 2 && v.every(n => typeof n === "number" && n >= 0 && n <= 1);
-  return r && ["sl","sr","waist","feet"].every(k => ok(r[k])) ? r : null;
-}
-function photoModelSVG(sel, me, opts = {}){
-  const W = me.w, H = me.h, P = k => [me.pts[k][0]*W, me.pts[k][1]*H];
-  const [sl, sr, wa, fe] = ["sl","sr","waist","feet"].map(P);
-  const sw = Math.max(12, Math.abs(sr[0]-sl[0])), cx = (sl[0]+sr[0])/2, sy = (sl[1]+sr[1])/2, wy = wa[1], fy = fe[1], ky = wy + (fy-wy)*.5, wx = wa[0];
-  const it = k => sel && sel[k] ? store.item(sel[k]) : null;
-  const parts = [];
-  const put = (item, x, y, w, h, fit = "none") => { const u = cutoutFor(item); if(!u) return; parts.push(`<image href="${esc(u)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" preserveAspectRatio="${fit === "none" ? "none" : "xMidYMid meet"}" filter="url(#ps)"/>`); };
-  const top = it("top"), bottom = it("bottom"), dress = it("dress"), outer = it("outer"), shoes = it("shoes"), acc = it("accessory");
-  if(dress){ const w = sw*1.55; put(dress, cx-w/2, sy-sw*.12, w, (ky-sy)*1.15+sw*.12); }
-  else {
-    if(bottom){ const shape = bottom.shape || "pants"; const y = wy-(wy-sy)*.08;
-      if(shape === "skirt"){ const w = sw*1.2; put(bottom, wx-w/2, y, w, (ky-wy)*1.05); }
-      else if(shape === "shorts"){ const w = sw*1.05; put(bottom, wx-w/2, y, w, (ky-wy)*.8); }
-      else { const w = sw*1.0; put(bottom, wx-w/2, y, w, fy-y); } }
-    if(top){ const w = sw*1.65; put(top, cx-w/2, sy-sw*.14, w, (wy-sy)*1.22+sw*.14); }
-  }
-  if(outer){ const w = sw*1.75; put(outer, cx-w/2, sy-sw*.16, w, (wy-sy)*1.45+sw*.16); }
-  if(shoes){ const w = sw*1.2, h = sw*.5; put(shoes, fe[0]-w/2, fy-h*.7, w, h, "meet"); }
-  if(acc){ const w = sw*.55; put(acc, cx+sw*.5, wy-sw*.25, w, w, "meet"); }
-  const handles = opts.handles ? ["sl","sr","waist","feet"].map(k => { const [x,y] = P(k); return `<g data-h="${k}" style="cursor:grab"><circle cx="${x}" cy="${y}" r="${W*.05}" fill="transparent"/><circle cx="${x}" cy="${y}" r="${W*.022}" fill="#2747d6" stroke="#fff" stroke-width="${W*.008}"/></g>`; }).join("") : "";
-  const span = Math.max(20, fy - sy), vh = span*1.5, vw = vh*.62, vb = opts.handles ? `0 0 ${W} ${H}` : `${(cx - vw/2).toFixed(1)} ${(sy - span*.38).toFixed(1)} ${vw.toFixed(1)} ${vh.toFixed(1)}`;
-  return `<svg viewBox="${vb}" role="img" aria-label="${esc(opts.label || "You wearing the outfit")}" ${opts.handles ? 'style="touch-action:none;border-radius:14px"' : ""} data-w="${W}" data-h2="${H}"><defs><filter id="ps" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="${W*.006}" stdDeviation="${W*.008}" flood-opacity=".3"/></filter></defs><image href="${esc(me.photo)}" width="${W}" height="${H}"/>${parts.join("")}${handles}</svg>`;
-}
-
-/* ---------- sample closet (shown only while yours is empty) ---------- */
-function makeSample(cat, colA, colB, pattern, name, shape){
-  const c = document.createElement("canvas"); c.width = 240; c.height = 320; const x = c.getContext("2d");
-  x.fillStyle = "#e9ecf2"; x.fillRect(0,0,240,320);
-  const fab = document.createElement("canvas"); fab.width = fab.height = 40; const f = fab.getContext("2d");
-  f.fillStyle = colA; f.fillRect(0,0,40,40);
-  if(pattern === "stripe"){ f.fillStyle = colB; f.fillRect(0,0,40,10); f.fillRect(0,20,40,10); }
-  if(pattern === "check"){ f.fillStyle = colB; f.globalAlpha=.55; f.fillRect(0,0,40,14); f.fillRect(0,0,14,40); f.globalAlpha=1; }
-  if(pattern === "denim"){ f.strokeStyle = colB; f.globalAlpha=.35; for(let i=-40;i<80;i+=5){ f.beginPath(); f.moveTo(i,0); f.lineTo(i+40,40); f.stroke(); } f.globalAlpha=1; }
-  if(pattern === "dots"){ f.fillStyle = colB; for(const [a,b] of [[10,10],[30,30]]){ f.beginPath(); f.arc(a,b,4,0,7); f.fill(); } }
-  x.fillStyle = x.createPattern(fab, "repeat");
-  const p = new Path2D({
-    top:"M70 70 Q120 55 170 70 L215 120 L190 145 L175 128 L178 270 L62 270 L65 128 L50 145 L25 120 Z",
-    bottom: shape==="skirt" ? "M75 60 L165 60 L200 270 L40 270 Z" : "M70 40 L170 40 L180 290 L132 290 L120 120 L108 290 L60 290 Z",
-    dress:"M85 40 Q120 30 155 40 L160 120 L200 290 L40 290 L80 120 Z",
-    outer:"M70 50 Q120 35 170 50 L210 110 L205 280 L180 280 L178 150 L176 285 L64 285 L62 150 L60 280 L35 280 L30 110 Z",
-    shoes:"M30 200 Q30 150 70 150 L110 160 Q140 175 200 185 Q220 195 215 225 L30 225 Z",
-    accessory:"M70 130 L170 130 L185 270 L55 270 Z M90 130 Q90 70 120 70 Q150 70 150 130 L138 130 Q138 84 120 84 Q102 84 102 130 Z",
-  }[cat]);
-  x.fill(p, "evenodd"); x.strokeStyle = "rgba(0,0,0,.18)"; x.lineWidth = 2; x.stroke(p);
-  return {id:"sample_"+name.replace(/\W+/g,"_").toLowerCase(), kind:"item", sample:true, name, category:cat, shape:shape||null, colors:[colA], img:c.toDataURL("image/jpeg",.85), created:0};
-}
-let SAMPLES = null;
-function samples(){ if(SAMPLES) return SAMPLES; SAMPLES = [
-  makeSample("top","#f4f4f0","#1f2a4d","stripe","Striped tee"),
-  makeSample("top","#7a1f2b","#5c1520","plain","Burgundy knit"),
-  makeSample("top","#f2c94c","#e0b43a","plain","Mustard top"),
-  makeSample("bottom","#2f4f7f","#1d3459","denim","Blue jeans","pants"),
-  makeSample("bottom","#d8c7a8","#c4b18f","plain","Beige chinos","pants"),
-  makeSample("bottom","#222222","#111","plain","Black skirt","skirt"),
-  makeSample("dress","#2e7d5b","#f5f1e6","dots","Green dot dress"),
-  makeSample("outer","#3b3f46","#55595f","check","Grey overshirt"),
-  makeSample("outer","#c98a4b","#a86f39","plain","Camel jacket"),
-  makeSample("shoes","#fafafa","#ddd","plain","White sneakers"),
-  makeSample("shoes","#5a3a22","#3f2816","plain","Brown boots"),
-  makeSample("accessory","#1b1b1b","#333","plain","Black tote"),
-]; return SAMPLES; }
 
 /* ---------- storage: your account first, this phone as backup ---------- */
 const idb = {
@@ -443,66 +456,87 @@ const store = {
     else { try{ await idb.del(id); }catch(_){} }
   },
   realItems(){ return Object.entries(this.docs).filter(([,d]) => d && d.kind === "item").map(([id,d]) => ({...d, id})).sort((a,b) => (b.created||0)-(a.created||0)); },
-  items(){ const r = this.realItems(); return r.length ? r : samples(); },
-  usingSamples(){ return this.realItems().length === 0; },
+  items(){ return this.realItems(); },
+  usingSamples(){ return false; },
   outfits(){ return Object.entries(this.docs).filter(([,d]) => d && d.kind === "outfit").map(([id,d]) => ({...d, id})).sort((a,b) => (b.created||0)-(a.created||0)); },
-  profile(){ return {skin:"#c68e64", hair:"#2b1d14", hairStyle:"short", ...(this.docs.profile || {})}; },
-  item(id){ return this.items().find(i => i.id === id) || samples().find(i => i.id === id) || null; },
+  item(id){ return this.items().find(i => i.id === id) || null; },
 };
 
-/* ---------- the little model ---------- */
-const SHAPES = {
-  top:{d:"M52 80 Q80 72 108 80 L124 122 L111 128 L106 110 L110 176 L50 176 L54 110 L49 128 L36 122 Z", box:[36,72,88,106]},
-  bottom_pants:{d:"M47 170 L113 170 L116 202 L107 334 L86 334 L81 214 L79 214 L74 334 L53 334 L44 202 Z", box:[44,170,72,164]},
-  bottom_shorts:{d:"M47 170 L113 170 L117 236 L86 238 L80 212 L74 238 L43 236 Z", box:[43,170,74,68]},
-  bottom_skirt:{d:"M47 170 L113 170 L126 262 Q80 270 34 262 Z", box:[34,170,92,100]},
-  dress:{d:"M54 80 Q80 74 106 80 L112 120 L114 168 L132 284 Q80 294 28 284 L46 168 L48 120 Z", box:[28,74,104,220]},
-  outer_l:{d:"M52 80 L40 86 L27 188 L39 191 L51 114 L50 190 L73 190 L71 82 Z", box:[27,80,46,111]},
-  shoes:{d:"M52 330 L76 330 L78 344 Q78 350 70 350 L46 350 Q42 342 52 330 Z M84 330 L108 330 Q118 342 114 350 L90 350 Q82 350 82 344 Z", box:[42,330,76,20]},
-};
-const HAIR = {
-  short:"M56 40 Q56 14 80 14 Q104 14 104 40 Q100 26 80 26 Q62 26 56 40 Z",
-  long:"M54 44 Q52 12 80 12 Q108 12 106 44 L110 104 Q100 110 96 92 L98 40 Q90 26 80 26 Q68 26 62 40 L64 92 Q60 110 50 104 Z",
-  bun:"M56 40 Q56 16 80 16 Q104 16 104 40 Q100 28 80 28 Q62 28 56 40 Z M70 12 a10 10 0 1 0 20 0 a10 10 0 1 0 -20 0",
-  curly:"M50 46 Q44 30 54 22 Q56 8 72 10 Q80 2 90 10 Q106 8 106 22 Q116 30 110 46 Q104 34 96 30 Q88 26 80 28 Q70 26 62 32 Q56 36 50 46 Z",
-  none:"",
-};
-let modelN = 0;
-function modelSVG(sel, opts = {}){
-  const me = store.docs.me; if(store.profile().mode === "photo" && me && me.photo && me.pts) return photoModelSVG(sel, me, opts);
-  const p = store.profile(); const n = ++modelN; const skin = okHex(p.skin) || "#c68e64"; const hair = okHex(p.hair) || "#2b1d14";
-  const it = k => sel && sel[k] ? store.item(sel[k]) : null;
+/* ---------- the outfit collage (flat lay) ---------- */
+function pieceOf(item){
+  if(!item) return null;
+  const u = cutoutFor(item);
+  if(u){ const g = garmentInfo(u); return g ? {u, ar:g.ar, at:g.at, cut:true} : null; }
+  const key = item.id + ":" + (item.img||"").length;
+  if(!item.cutout && cutCache.get(key) === "none") return {u:item.img, ar:.75, at:() => ({w:.8, c:.5}), cut:false};
+  return null;
+}
+function labelOf(item){
+  const l1 = item.brand || item.shop || item.name || "";
+  const bits = []; if(item.toBuy) bits.push("To buy"); if(item.price) bits.push(item.price);
+  return {l1: l1.slice(0,26), l2: bits.join(" · ").slice(0,28)};
+}
+let collN = 0;
+function collageSVG(sel, opts = {}){
+  const n = ++collN; const it = k => sel && sel[k] ? store.item(sel[k]) : null;
+  const VW = 600, VH = 900; const parts = [], labels = [];
+  let waiting = false;
+  const img = (p, x, y, w, h) => p.cut
+    ? `<image href="${esc(p.u)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" preserveAspectRatio="none" filter="url(#cs${n})"/>`
+    : `<g filter="url(#cs${n})"><clipPath id="cp${n}_${parts.length}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14"/></clipPath><image href="${esc(p.u)}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice" clip-path="url(#cp${n}_${parts.length})"/></g>`;
+  const label = (item, cx, y, anchor = "middle") => { const {l1, l2} = labelOf(item); if(!l1 && !l2) return;
+    labels.push(`<text x="${cx.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="${anchor}" font-family="DM Sans, Helvetica, Arial, sans-serif" fill="#1d1d1f"><tspan font-weight="700" font-size="19">${esc(l1)}</tspan>${l2 ? `<tspan x="${cx.toFixed(1)}" dy="19" font-size="15" fill="${item.toBuy ? "#b4442a" : "#4a4a4f"}" font-weight="${item.toBuy ? 700 : 500}">${esc(l2)}</tspan>` : ""}</text>`); };
   const top = it("top"), bottom = it("bottom"), dress = it("dress"), outer = it("outer"), shoes = it("shoes"), acc = it("accessory");
-  const defs = [], parts = [];
-  const garment = (item, key, extra = "") => {
-    const s = SHAPES[key]; const [x,y,w,h] = s.box; const pid = `g${n}_${key}`; const base = okHex(item.colors && item.colors[0]) || "#999999";
-    defs.push(`<pattern id="${pid}" patternUnits="userSpaceOnUse" x="${x}" y="${y}" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${base}"/>${item.fabric ? `<image href="${esc(item.fabric)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice"/>` : `<image href="${esc(item.img)}" x="${-w*.25}" y="${-h*.15}" width="${w*1.5}" height="${h*1.3}" preserveAspectRatio="xMidYMid slice"/>`}</pattern>`);
-    parts.push(`<path d="${s.d}" fill="url(#${pid})" stroke="rgba(0,0,0,.22)" stroke-width="1" ${extra}/>`);
-    parts.push(`<path d="${s.d}" fill="url(#shade${n})" ${extra} pointer-events="none"/>`);
-  };
-  // body
-  parts.push(`<g fill="${skin}">
-    <path d="M52 82 L40 86 L28 186 L38 190 L52 112 Z"/><path d="M108 82 L120 86 L132 186 L122 190 L108 112 Z"/>
-    <circle cx="33" cy="193" r="6"/><circle cx="127" cy="193" r="6"/>
-    <rect x="72" y="60" width="16" height="22" rx="6"/>
-    <path d="M52 80 Q80 72 108 80 L112 170 L48 170 Z"/>
-    <path d="M47 168 L113 168 L114 202 L105 334 L87 334 L81 214 L79 214 L73 334 L55 334 L46 202 Z"/>
-    <ellipse cx="80" cy="42" rx="22" ry="25"/></g>`);
-  parts.push(`<path d="${HAIR[p.hairStyle] ?? HAIR.short}" fill="${hair}"/>`);
-  parts.push(`<g fill="#1b2233" opacity=".75"><circle cx="72" cy="44" r="2"/><circle cx="88" cy="44" r="2"/></g><path d="M74 54 Q80 58 86 54" stroke="#1b2233" stroke-width="1.6" fill="none" opacity=".6" stroke-linecap="round"/>`);
-  if(dress) garment(dress, "dress");
-  else {
-    if(bottom) garment(bottom, "bottom_" + (["shorts","skirt"].includes(bottom.shape) ? bottom.shape : "pants"));
-    if(top) garment(top, "top");
+  const side = [outer, acc, shoes].filter(Boolean);
+  const MX = side.length ? 395 : 300, MAXW = side.length ? 340 : 400;
+  // main column
+  if(dress){ const p = pieceOf(dress); if(!p) waiting = true; else {
+    let H = 760, W = H*p.ar; if(W > MAXW){ W = MAXW; H = W/p.ar; }
+    const x = MX - p.at(.3).c*W, y = (VH - H)/2 - 10; parts.push(img(p, x, y, W, H)); label(dress, MX, y + H + 28); } }
+  else if(top || bottom){
+    const pt = top && pieceOf(top), pb = bottom && pieceOf(bottom);
+    if((top && !pt) || (bottom && !pb)) waiting = true; else {
+      // natural sizes relative to each other: the waistband matches the top's body width
+      let Wt = pt ? 1 : 0, Ht = pt ? 1/pt.ar : 0, Wb = 0, Hb = 0;
+      if(pb){ Wb = pt ? .88*pt.at(.62).w/Math.max(.2, pb.at(.04).w) : 1; Hb = Wb/pb.ar; }
+      const overlap = pt && pb ? Ht*.18 : 0; let total = Ht + Hb - overlap;
+      const k = Math.min(MAXW/Math.max(Wt, Wb), 750/total, pt && !pb ? 430*pt.ar/1 : 1e9);
+      Wt*=k; Ht*=k; Wb*=k; Hb*=k; total*=k;
+      let y = (VH - total)/2 + 8;
+      if(pt){ const x = MX - pt.at(.62).c*Wt; parts.push(img(pt, x, y, Wt, Ht)); label(top, MX, Math.max(22, y - 26)); }
+      if(pb){ const yb = y + Ht - overlap*k, x = MX - pb.at(.04).c*Wb; parts.push(img(pb, x, yb, Wb, Hb)); label(bottom, MX, Math.min(VH - 30, yb + Hb + 26)); }
+    }
   }
-  if(shoes) garment(shoes, "shoes");
-  else parts.push(`<path d="${SHAPES.shoes.d}" fill="#9aa1af"/>`);
-  if(outer){ garment(outer, "outer_l"); const s = SHAPES.outer_l; const pid = `g${n}_outer_l`;
-    parts.push(`<g transform="translate(160 0) scale(-1 1)"><path d="${s.d}" fill="url(#${pid})" stroke="rgba(0,0,0,.22)" stroke-width="1"/><path d="${s.d}" fill="url(#shade${n})"/></g>`); }
-  if(acc){ const base = okHex(acc.colors && acc.colors[0]) || "#444"; parts.push(`<path d="M120 196 L142 196 L146 226 L116 226 Z" fill="${base}" stroke="rgba(0,0,0,.25)"/><path d="M124 196 Q131 180 138 196" stroke="${base}" stroke-width="3" fill="none"/>`); }
-  if(!top && !bottom && !dress && opts.hint) parts.push(`<text x="80" y="250" text-anchor="middle" font-size="10" fill="currentColor" opacity=".6" font-family="DM Sans, sans-serif">Pick clothes →</text>`);
-  defs.push(`<linearGradient id="shade${n}" x1="0" x2="1"><stop offset="0" stop-color="#000" stop-opacity=".16"/><stop offset=".45" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#000" stop-opacity=".2"/></linearGradient>`);
-  return `<svg viewBox="0 0 160 360" role="img" aria-label="${esc(opts.label || "Model wearing the outfit")}"><defs>${defs.join("")}</defs><ellipse cx="80" cy="352" rx="44" ry="6" fill="#000" opacity=".1"/>${parts.join("")}</svg>`;
+  // side column: layer, extra, shoes
+  if(side.length){
+    const SX = 118, SW = 180; const slotH = {outer:300, accessory:170, shoes:190};
+    const want = side.map(i => slotH[i.category] || 180); const gaps = 54; let total = want.reduce((a,b)=>a+b,0) + gaps*side.length;
+    const k = Math.min(1, 820/total); let y = (VH - total*k)/2 + 6;
+    side.forEach((item, i) => { const p = pieceOf(item); const boxH = want[i]*k;
+      if(!p){ waiting = true; y += boxH + gaps*k; return; }
+      let W = SW, H = W/p.ar; if(H > boxH){ H = boxH; W = H*p.ar; }
+      const x = SX - W/2, yy = y + (boxH - H)/2; parts.push(img(p, x, yy, W, H)); label(item, SX, yy + H + 24); y += boxH + gaps*k; });
+  }
+  const empty = !top && !bottom && !dress && !side.length;
+  const size = opts.export ? `xmlns="http://www.w3.org/2000/svg" width="1200" height="1800"` : "";
+  return `<svg ${size} viewBox="0 0 ${VW} ${VH}" role="img" aria-label="${esc(opts.label || "Outfit collage")}"><defs>
+    <filter id="tx${n}" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="3" seed="${7}" result="t"/><feColorMatrix in="t" type="matrix" values="0 0 0 0 .45  0 0 0 0 .43  0 0 0 0 .40  0 0 0 .55 0"/><feComposite in2="SourceGraphic" operator="in"/></filter>
+    <filter id="cs${n}" x="-15%" y="-10%" width="130%" height="125%"><feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#2a241c" flood-opacity=".28"/></filter></defs>
+    <rect width="${VW}" height="${VH}" fill="#e7e2da"/><rect width="${VW}" height="${VH}" fill="#000" filter="url(#tx${n})" opacity=".35"/>
+    <rect x="18" y="18" width="${VW-36}" height="${VH-36}" rx="6" fill="none" stroke="#b9b1a5" stroke-width="2" opacity=".55"/><rect x="30" y="30" width="${VW-60}" height="${VH-60}" rx="4" fill="none" stroke="#b9b1a5" stroke-width="1" stroke-dasharray="2 6" opacity=".6"/>
+    ${parts.join("")}${labels.join("")}
+    ${empty && opts.hint ? `<text x="${VW/2}" y="${VH/2}" text-anchor="middle" font-size="22" fill="#6b655c" font-family="DM Sans, Helvetica, Arial, sans-serif">Pick clothes to build your outfit</text>` : ""}
+    ${waiting && !opts.export ? `<text x="${VW/2}" y="${VH-44}" text-anchor="middle" font-size="16" fill="#6b655c" font-family="DM Sans, Helvetica, Arial, sans-serif">Cutting out the photos…</text>` : ""}
+  </svg>`;
+}
+async function shareCollage(sel, name){
+  try{
+    const svg = collageSVG(sel, {export:true}); const url = URL.createObjectURL(new Blob([svg], {type:"image/svg+xml"}));
+    const im = await loadImg(url); const c = document.createElement("canvas"); c.width = 1200; c.height = 1800; c.getContext("2d").drawImage(im, 0, 0, 1200, 1800); URL.revokeObjectURL(url);
+    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", .9)); const file = new File([blob], (name || "outfit").replace(/[^\w-]+/g, "-") + ".jpg", {type:"image/jpeg"});
+    if(navigator.canShare && navigator.canShare({files:[file]})){ try{ await navigator.share({files:[file], title: name || "My outfit"}); return; }catch(e){ if(e && e.name === "AbortError") return; } }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.append(a); a.click(); a.remove(); toast("Picture saved.");
+  }catch(e){ toast("Could not make the picture. Try again."); }
 }
 
 /* ---------- app state ---------- */
@@ -520,7 +554,7 @@ async function imgsFor(items){
   const lim = await s.limits().catch(() => null); const max = lim?.images?.maxCount || 0; if(!max) return [];
   return Promise.all(items.slice(0, max).map(i => dataUrlToBlob(i.img)));
 }
-function wardrobeText(){ return store.items().map(i => `- id=${i.id} | ${i.category}${i.shape?"/"+i.shape:""} | ${i.name} | colors ${(i.colors||[]).join(", ")}`).join("\n"); }
+function wardrobeText(){ return store.items().map(i => `- id=${i.id} | ${i.category}${i.shape?"/"+i.shape:""} | ${i.name} | colors ${(i.colors||[]).join(", ")}${i.toBuy ? " | NOT BOUGHT YET (wishlist)" : ""}`).join("\n"); }
 function aiErr(e){ const c = e && e.code; if(c === "not_granted") return "The AI helper is turned off for this page. You can still use the color meter."; if(c === "rate_limited") return "The AI helper is busy. Wait a minute and try again."; if(c === "invalid_json") return "The AI gave an answer I could not read. Try again."; return "The AI helper could not answer right now. Try again in a moment."; }
 
 async function aiTag(photo){
@@ -596,17 +630,19 @@ Reply with only JSON: {"winner":"A" or "B","why":"2 short sentences","a":"one li
 
 /* ---------- views ---------- */
 function vCloset(){
-  const all = store.items(); const list = S.filter === "all" ? all : all.filter(i => i.category === S.filter);
+  const all = store.items(); const list = S.filter === "all" ? all : S.filter === "buy" ? all.filter(i => i.toBuy) : all.filter(i => i.category === S.filter);
+  const nBuy = all.filter(i => i.toBuy).length;
   return `<div class="stack">
-    ${store.usingSamples() ? `<div class="banner"><b>These are sample clothes</b> so you can try the app. Tap <b>Add</b> to snap your own and the samples go away.</div>` : ""}
     <div class="chips" role="group" aria-label="Filter">
-      ${[["all","All"], ...CATS.map(c => [c.id, c.plural])].map(([id,l]) => `<button class="chip" data-filter="${id}" aria-pressed="${S.filter===id}">${l}${id!=="all"?` · ${all.filter(i=>i.category===id).length}`:""}</button>`).join("")}
+      ${[["all","All"], ["buy","To buy"], ...CATS.map(c => [c.id, c.plural])].map(([id,l]) => `<button class="chip" data-filter="${id}" aria-pressed="${S.filter===id}">${l}${id==="buy" ? ` · ${nBuy}` : id!=="all"?` · ${all.filter(i=>i.category===id).length}`:""}</button>`).join("")}
     </div>
     <div class="grid">
       <button class="add-tile" data-act="add"><b>+</b>Add clothes</button>
-      ${list.map(i => `<button class="card" data-item="${esc(i.id)}" aria-label="${esc(i.name)}"><img src="${esc(i.img)}" alt="" loading="lazy">${i.sample?'<span class="sample">Sample</span>':""}<span class="tag">${esc(i.name)}</span></button>`).join("")}
+      <button class="add-tile" data-act="addlink"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6h15l-1.5 8.5H7.5z"/><path d="M6 6 5 3H2"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="18" cy="19.5" r="1.5"/></svg>From a shop link</button>
+      ${list.map(i => `<button class="card" data-item="${esc(i.id)}" aria-label="${esc(i.name)}"><img src="${esc(i.img)}" alt="" loading="lazy">${i.toBuy?'<span class="buy">To buy</span>':""}<span class="tag">${esc(i.name)}</span></button>`).join("")}
     </div>
-    ${list.length === 0 ? `<p class="empty">Nothing here yet. Add your first ${esc(CATS.find(c=>c.id===S.filter)?.label.toLowerCase() || "item")}.</p>` : ""}
+    ${all.length === 0 ? `<div class="banner"><b>Start your closet.</b> Snap each piece on a plain floor, bed or wall and the app cuts it out neatly. Or paste a link from Trendyol, Max or any shop to add something you want to buy.</div>`
+      : list.length === 0 ? `<p class="empty">${S.filter === "buy" ? "Nothing on your to-buy list yet. Add something from a shop link." : `Nothing here yet. Add your first ${esc(CATS.find(c=>c.id===S.filter)?.label.toLowerCase() || "item")}.`}</p>` : ""}
   </div>`;
 }
 function vOutfit(){
@@ -618,8 +654,8 @@ function vOutfit(){
   const r = ai && ai.result;
   return `<div class="stack">
     <div class="row between"><h2>Build an outfit</h2><div class="row"><button class="btn sm line" data-act="shuffle">Shuffle</button><button class="btn sm line" data-act="clear">Clear</button></div></div>
-    <div class="builder">
-      <div class="stage">${modelSVG(S.sel, {hint:true})}<button class="btn sm ghost" data-act="model" style="position:absolute;top:8px;left:8px;font-size:.72rem;padding:5px 10px;min-height:30px">Edit me</button></div>
+    <div class="builder wide">
+      <div class="stage collage">${collageSVG(S.sel, {hint:true})}</div>
       <div class="slots">
         ${CATS.map(c => { const it = S.sel[c.id] ? store.item(S.sel[c.id]) : null; return `<button class="slot" data-slot="${c.id}" aria-expanded="${openCat===c.id}">
           ${it ? `<img class="ph" src="${esc(it.img)}" alt="">` : `<span class="ph">+</span>`}
@@ -628,11 +664,12 @@ function vOutfit(){
     </div>
     ${openCat ? `<div class="picker"><div class="row between" style="margin-bottom:8px"><h3>Choose ${esc(catLabel(openCat).toLowerCase())}</h3><button class="btn sm ghost" data-act="close">Done</button></div>
       <div class="strip"><button data-pick="" aria-pressed="${!S.sel[openCat]}"><span class="none">None</span></button>
-      ${choices.map(i => `<button data-pick="${esc(i.id)}" aria-pressed="${S.sel[openCat]===i.id}" aria-label="${esc(i.name)}"><img src="${esc(i.img)}" alt=""></button>`).join("")}</div>
+      ${choices.map(i => `<button data-pick="${esc(i.id)}" aria-pressed="${S.sel[openCat]===i.id}" aria-label="${esc(i.name)}${i.toBuy ? " (to buy)" : ""}"><img src="${esc(i.img)}" alt="">${i.toBuy ? '<span class="buy">Buy</span>' : ""}</button>`).join("")}</div>
       ${choices.length === 0 ? `<p class="small muted">You have no ${esc(CATS.find(c=>c.id===openCat).plural.toLowerCase())} yet. Add some in the Closet.</p>` : ""}</div>` : ""}
     <div class="meter"><span class="small" style="font-weight:700">Color match</span><span class="bar"><i style="width:${h.score ?? 0}%;background:${col}"></i></span><b>${h.score ?? "–"}</b></div>
     <p class="small muted" style="margin:-6px 0 0">${esc(h.note)}</p>
-    <div class="row"><button class="btn" data-act="rate" ${ai && ai.busy ? "disabled" : ""}>${ai && ai.busy ? "Asking…" : "Ask AI about this outfit"}</button><button class="btn ghost" data-act="save">Save outfit</button></div>
+    ${(() => { const nb = Object.values(S.sel).map(id => store.item(id)).filter(i => i && i.toBuy); return nb.length ? `<div class="note">This outfit uses ${nb.length === 1 ? "1 piece" : nb.length + " pieces"} you haven’t bought yet: ${nb.map(i => esc(i.name)).join(", ")}.</div>` : ""; })()}
+    <div class="row"><button class="btn" data-act="rate" ${ai && ai.busy ? "disabled" : ""}>${ai && ai.busy ? "Asking…" : "Ask AI about this outfit"}</button><button class="btn ghost" data-act="save">Save outfit</button><button class="btn line" data-act="share">Share picture</button></div>
     ${ai ? `<div class="ai" aria-live="polite">${ai.busy ? `<p class="live">${esc(ai.live)}</p>` : ai.err ? `<p>${esc(ai.err)}</p>` : `
       <div class="row" style="align-items:flex-end;gap:12px"><span class="score">${esc(Math.round(Number(r.score) || 0))}<span class="small muted">/10</span></span><h3 style="flex:1;min-width:0">${esc(r.headline)}</h3></div>
       <p style="margin:0">${esc(r.colors)}</p>
@@ -652,7 +689,7 @@ function vSaved(){
     ${c && !c.busy ? `<div class="ai" aria-live="polite">${c.err ? `<p>${esc(c.err)}</p>` : `<h3>Wear “${esc(nameOf(c.r.winner === "B" ? c.b : c.a))}”</h3><p style="margin:0">${esc(c.r.why)}</p><p class="small muted" style="margin:0"><b>A:</b> ${esc(c.r.a)}<br><b>B:</b> ${esc(c.r.b)}</p>`}</div>` : ""}
     <div class="olist">
       ${os.map(o => { const k = S.compare.indexOf(o.id); return `<div class="ocard ${k>=0?"sel":""}">
-        <button data-cmp="${esc(o.id)}" style="border:0;background:none;padding:0" aria-label="Pick ${esc(o.name)} to compare">${modelSVG(o.items, {label:o.name})}</button>
+        <button data-cmp="${esc(o.id)}" style="border:0;background:none;padding:0" aria-label="Pick ${esc(o.name)} to compare">${collageSVG(o.items, {label:o.name})}</button>
         ${k>=0 ? `<span class="pick-badge">${k===0?"A":"B"}</span>` : ""}
         <span class="nm">${esc(o.name)}</span>
         <div class="swatches">${outfitColors(o.items).map(h => `<span class="sw" style="background:${okHex(h)||"#999"}"></span>`).join("")}</div>
@@ -664,13 +701,13 @@ function vAsk(){
   const a = S.ask;
   return `<div class="stack">
     <h2>What should I wear?</h2>
-    <p class="muted" style="margin:-8px 0 0">Tell the AI where you are going. It picks an outfit only from your closet${store.usingSamples() ? " (right now, the sample clothes)" : ""}.</p>
+    <p class="muted" style="margin:-8px 0 0">Tell the AI where you are going. It picks an outfit only from your closet.</p>
     <div class="field"><label for="occ">Where are you going?</label><input id="occ" value="${esc(a.occasion)}" placeholder="School, a party, a date, a job interview…"></div>
     <div class="field"><label for="wx">Weather</label><select id="wx">${["","Hot","Warm","Mild","Cold","Rainy"].map(w => `<option ${a.weather===w?"selected":""} value="${w}">${w || "Any weather"}</option>`).join("")}</select></div>
     <div class="chips">${["School","Party","Date night","Interview","Weekend chill","Wedding guest"].map(o => `<button class="chip" data-occ="${o}" aria-pressed="${a.occasion===o}">${o}</button>`).join("")}</div>
     <button class="btn" data-act="suggest" ${a.busy?"disabled":""}>${a.busy ? "Picking an outfit…" : "Pick an outfit for me"}</button>
     ${a.err ? `<div class="ai"><p>${esc(a.err)}</p></div>` : ""}
-    ${a.result ? `<div class="ai" aria-live="polite"><div class="builder"><div class="stage">${modelSVG(a.result.sel, {label:a.result.name})}</div>
+    ${a.result ? `<div class="ai" aria-live="polite"><div class="builder"><div class="stage collage">${collageSVG(a.result.sel, {label:a.result.name})}</div>
       <div class="stack" style="gap:8px"><h3>${esc(a.result.name)}</h3><p class="small" style="margin:0">${esc(a.result.why)}</p>
       <div class="swatches">${outfitColors(a.result.sel).map(h => `<span class="sw" style="background:${okHex(h)||"#999"}"></span>`).join("")}</div></div></div>
       <div class="row"><button class="btn sm" data-act="usesug">Open in outfit builder</button><button class="btn sm ghost" data-act="suggest">Another idea</button></div></div>` : ""}
@@ -678,8 +715,8 @@ function vAsk(){
 }
 
 /* ---------- sheets ---------- */
-let sheet = null; // {type:'item', draft} | {type:'model'} | {type:'name'}
-function closeSheet(){ if(sheet && sheet.type === "model" && !sheet.saved){ store.docs = {...store.docs, profile: sheet.orig, me: sheet.origMe}; } sheet = null; renderSheet(); render(); }
+let sheet = null; // {type:'item', draft} | {type:'link'} | {type:'name'}
+function closeSheet(){ sheet = null; renderSheet(); render(); }
 function renderSheet(){
   let bg = $(".sheet-bg"); if(!sheet){ bg && bg.remove(); return; }
   if(!bg){ bg = document.createElement("div"); bg.className = "sheet-bg"; bg.addEventListener("click", e => { if(e.target === bg) closeSheet(); }); document.body.append(bg); }
@@ -696,35 +733,22 @@ function renderSheet(){
       <div class="field"><label>Type</label><div class="seg">${CATS.map(c => `<button class="chip" data-cat="${c.id}" aria-pressed="${d.category===c.id}">${c.label}</button>`).join("")}</div></div>
       ${d.category === "bottom" ? `<div class="field"><label>Cut</label><div class="seg">${["pants","shorts","skirt"].map(s => `<button class="chip" data-shape="${s}" aria-pressed="${(d.shape||"pants")===s}">${s[0].toUpperCase()+s.slice(1)}</button>`).join("")}</div></div>` : ""}
       <div class="field"><label>Main color</label><div class="row">${(d.colors||[]).map((h,i) => `<span class="sw" style="width:26px;height:26px;background:${okHex(h)||"#999"}"></span>`).join("")}<input type="color" id="icolor" value="${okHex(d.colors && d.colors[0]) || "#888888"}" aria-label="Pick main color" style="width:44px;height:36px;border:0;background:none;padding:0"><span class="small muted">${esc(colorName(d.colors && d.colors[0] || "#888888"))}</span></div></div>
+      <label class="toggle"><input type="checkbox" id="ibuy" ${d.toBuy ? "checked" : ""}><span><b>Still to buy</b><br><span class="small muted">Shows a “To buy” tag. Untick it once you own it.</span></span></label>
+      <div class="row" style="gap:10px;align-items:flex-start"><div class="field" style="flex:1;min-width:130px"><label for="ibrand">Brand or shop</label><input id="ibrand" value="${esc(d.brand || "")}" placeholder="Zara"></div><div class="field" style="flex:1;min-width:110px"><label for="iprice">Price</label><input id="iprice" value="${esc(d.price || "")}" placeholder="AED 99"></div></div>
+      <div class="field"><label for="ilink">Shop link</label><input id="ilink" type="url" inputmode="url" value="${esc(d.link || "")}" placeholder="https://www.trendyol.com/…"></div>
+      <div class="row">${safeUrl(d.link) ? `<a class="btn sm line" href="${esc(safeUrl(d.link))}" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center">Open shop page</a>` : ""}${!d.isNew ? `<button class="btn sm ghost" data-sx="shopphoto">Use a clean shop photo</button>` : ""}</div>
       <div class="row"><button class="btn" data-sx="saveitem" ${d.saving?"disabled":""}>${d.saving ? "Saving…" : d.isNew ? "Add to closet" : "Save"}</button>
       ${!d.isNew && !d.sample ? `<button class="btn line" data-sx="delitem">${d.confirmDel ? "Tap again to delete" : "Delete"}</button>` : ""}
       ${!d.isNew ? `<button class="btn ghost" data-sx="wearitem">Wear this</button>` : ""}</div>
-      ${d.sample ? `<p class="small muted">This is a sample item. Add your own clothes to replace the samples.</p>` : ""}
     </div>`;
-  } else if(sheet.type === "model"){
-    const p = sheet.draft; const me = store.docs.me;
-    const modeSeg = `<div class="seg"><button class="chip" data-mode="doll" aria-pressed="${p.mode!=="photo"}">Mini model</button><button class="chip" data-mode="photo" aria-pressed="${p.mode==="photo"}">A photo of me</button></div>`;
-    if(p.mode === "photo"){
-      html = `<div class="stack">
-      <div class="row between"><h2>You as the model</h2><button class="btn sm ghost" data-sx="close">Close</button></div>
-      ${modeSeg}
-      ${me && me.photo ? `<div class="stage" id="adj" style="max-width:340px;width:100%;margin:0 auto">${photoModelSVG(S.sel, me, {handles:true})}</div>
-        <p class="small muted" style="margin:0">${sheet.finding ? "The AI is finding your shoulders, waist and feet…" : "Drag the blue dots onto your two shoulders, your waist and between your feet. The clothes follow."}</p>
-        <div class="row"><button class="btn" data-sx="savemodel">Save</button><button class="btn line" data-sx="mephoto">Change photo</button>${me.photo ? `<button class="btn ghost" data-sx="medelete">${sheet.confirmDel ? "Tap again to remove" : "Remove photo"}</button>` : ""}</div>`
-      : `<div class="banner"><b>Use a full-body photo of yourself.</b> Stand straight facing the camera, arms a little away from your body, in fitted clothes, against a plain wall. Your photo stays private in your closet. When you add it, it's sent to the AI once to find where your shoulders and feet are.</div>
-        <button class="btn" data-sx="mephoto">${sheet.processing ? "Loading photo…" : "Choose a photo of me"}</button>`}
-      </div>`;
-    } else
+  } else if(sheet.type === "link"){
     html = `<div class="stack">
-      <div class="row between"><h2>Your mini model</h2><button class="btn sm ghost" data-sx="close">Close</button></div>
-      ${modeSeg}
-      <div class="builder"><div class="stage">${modelSVG(S.sel, {})}</div>
-      <div class="stack" style="gap:12px">
-        <div class="field"><label>Skin tone</label><div class="seg">${["#f6d7c3","#e9b994","#c68e64","#a0663f","#7a4a2a","#4e2f1b"].map(c => `<button class="sw" data-skin="${c}" aria-label="Skin tone" aria-pressed="${p.skin===c}" style="width:34px;height:34px;background:${c};border-width:${p.skin===c?3:1.5}px;border-color:${p.skin===c?"var(--accent)":"var(--line)"}"></button>`).join("")}</div></div>
-        <div class="field"><label>Hair</label><div class="seg">${["short","long","bun","curly","none"].map(h => `<button class="chip" data-hs="${h}" aria-pressed="${p.hairStyle===h}">${h[0].toUpperCase()+h.slice(1)}</button>`).join("")}</div></div>
-        <div class="field"><label>Hair color</label><div class="seg">${["#16110d","#2b1d14","#6b4325","#b07a3e","#e2c27a","#9b9b9b","#c2410c","#7c3aed"].map(c => `<button class="sw" data-hc="${c}" aria-label="Hair color" style="width:30px;height:30px;background:${c};border-width:${p.hair===c?3:1.5}px;border-color:${p.hair===c?"var(--accent)":"var(--line)"}"></button>`).join("")}</div></div>
-      </div></div>
-      <button class="btn" data-sx="savemodel">Save my model</button></div>`;
+      <div class="row between"><h2>${sheet.forId ? "Use a clean shop photo" : "Add from a shop link"}</h2><button class="btn sm ghost" data-sx="close">Close</button></div>
+      <p class="small muted" style="margin:0">In the Trendyol, Max or other shop app, open the item, tap <b>Share</b>, then <b>Copy link</b>. Paste it below.</p>
+      <div class="field"><label for="lurl">Shop link</label><input id="lurl" type="url" inputmode="url" autocomplete="off" value="${esc(sheet.url || "")}" placeholder="https://www.trendyol.com/…"></div>
+      <button class="btn" data-sx="getlink" ${sheet.busy ? "disabled" : ""}>${sheet.busy ? "Opening the shop page…" : "Get the item"}</button>
+      ${sheet.err ? `<div class="note">${esc(sheet.err)}</div><button class="btn ghost" data-sx="linkshot">Choose a screenshot</button>` : ""}
+    </div>`;
   } else if(sheet.type === "name"){
     html = `<div class="stack"><div class="row between"><h2>Save outfit</h2><button class="btn sm ghost" data-sx="close">Close</button></div>
       <div class="field"><label for="oname">Outfit name</label><input id="oname" value="${esc(sheet.name)}" placeholder="Friday hangout"></div>
@@ -732,31 +756,14 @@ function renderSheet(){
   }
   bg.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
 }
-function openModelSheet(){ const p = store.profile(); sheet = {type:"model", draft:{...p}, orig:store.docs.profile, origMe:store.docs.me}; renderSheet(); }
-async function onMePhoto(file){
-  if(!file || !sheet || sheet.type !== "model") return;
-  sheet.processing = true; renderSheet();
-  let ph; try{ ph = await fileToPhoto(file); }catch(e){ sheet.processing = false; renderSheet(); toast("That file is not a photo I can open."); return; }
-  let box = null; try{ box = cleanPhoto(ph.img).box; }catch(_){}
-  const me = {kind:"me", photo:ph.dataUrl, w:ph.img.naturalWidth, h:ph.img.naturalHeight, pts:defaultPts(box)};
-  store.docs = {...store.docs, me}; sheet.meDirty = true; sheet.processing = false; sheet.finding = true; renderSheet();
-  try{ const pts = await aiBodyPts(me.photo); if(pts && store.docs.me === me){ me.pts = pts; } }catch(_){}
-  sheet && (sheet.finding = false); if(sheet && sheet.type === "model") renderSheet();
-}
-// dragging the body dots
-let drag = null;
-document.addEventListener("pointerdown", e => { const g = e.target.closest && e.target.closest("[data-h]"); if(!g || !sheet || sheet.type !== "model") return; const svg = g.ownerSVGElement; drag = {k:g.dataset.h, svg, g}; e.preventDefault(); try{ svg.setPointerCapture(e.pointerId); }catch(_){} });
-document.addEventListener("pointermove", e => { if(!drag) return; const r = drag.svg.getBoundingClientRect(); const fx = Math.min(1, Math.max(0, (e.clientX - r.left)/r.width)), fy = Math.min(1, Math.max(0, (e.clientY - r.top)/r.height));
-  const me = store.docs.me; me.pts = {...me.pts, [drag.k]:[fx, fy]}; sheet.meDirty = true; const W = me.w, H = me.h; drag.g.querySelectorAll("circle").forEach(c => { c.setAttribute("cx", fx*W); c.setAttribute("cy", fy*H); }); });
-document.addEventListener("pointerup", () => { if(!drag) return; drag = null; renderSheet(); });
 function openItem(id){ const it = store.item(id); if(!it) return; sheet = {type:"item", draft:{...it, colors:[...(it.colors||[])], isNew:false}}; renderSheet(); }
 
-async function onPhoto(file){
+async function onPhoto(file, extra){
   if(!file) return;
   let ph; try{ ph = await fileToPhoto(file); }catch(e){ toast("That file is not a photo I can open."); return; }
   let cl = null; try{ cl = cleanPhoto(ph.img); }catch(e){ cl = null; }
   const colors = cl ? cl.colors : await extractColors(ph.img).catch(() => ["#888888"]);
-  const draft = {isNew:true, id:uid("item"), kind:"item", raw:ph.dataUrl, clean:cl && cl.img, useClean:!!(cl && cl.cut), cleanFailed:!(cl && cl.cut), img:cl && cl.cut ? cl.img : ph.dataUrl, fabric:cl ? cl.fabric : null, cutout:cl ? cl.cutout : null, name:"", category:S.filter !== "all" ? S.filter : "top", shape:null, colors, tagging:true};
+  const draft = {isNew:true, id:uid("item"), kind:"item", raw:ph.dataUrl, clean:cl && cl.img, useClean:!!(cl && cl.cut), cleanFailed:!(cl && cl.cut), img:cl && cl.cut ? cl.img : ph.dataUrl, fabric:cl ? cl.fabric : null, cutout:cl ? cl.cutout : null, name:"", category:CATS.some(c => c.id === S.filter) ? S.filter : "top", shape:null, colors, tagging:true, ...(extra || {})};
   sheet = {type:"item", draft}; renderSheet();
   try{
     const t = await aiTag(draft.img);
@@ -772,6 +779,72 @@ async function onPhoto(file){
     }
   }catch(e){ if(sheet && sheet.draft === draft) draft.tagNote = "Colors picked from the photo. Choose the type and add a name."; }
   draft.tagging = false; if(sheet && sheet.draft === draft){ const n = $("#iname"); if(n && draft.nameTouched) draft.name = n.value; renderSheet(); }
+}
+
+/* ---------- shop links: pull the product photo, name and price ---------- */
+let pendingPhoto = null;
+function safeUrl(u){ try{ const x = new URL(String(u || "").trim()); return /^https?:$/.test(x.protocol) ? x.href : null; }catch(_){ return null; } }
+function shopName(u){ try{ const h = new URL(u).hostname.replace(/^(www|m|ae|sa|qa|kw|bh|om|en|ar)\./, ""); const b = h.split(".")[0];
+  return ({trendyol:"Trendyol", maxfashion:"Max", "ty":"Trendyol", namshi:"Namshi", zara:"Zara", hm:"H&M", shein:"SHEIN", noon:"noon", amazon:"Amazon"})[b] || (b[0].toUpperCase() + b.slice(1)); }catch(_){ return ""; } }
+const UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36";
+function nativeHttp(){ const C = window.Capacitor; return C && C.isNativePlatform && C.isNativePlatform() && C.Plugins && C.Plugins.CapacitorHttp; }
+function helperUrl(){ const c = window.PICKMYFIT_CONFIG; return c && c.aiUrl ? c.aiUrl.replace(/\/+$/, "") + "/fetch" : null; }
+async function helperFetch(url, binary){ const c = window.PICKMYFIT_CONFIG; const r = await fetch(helperUrl(), {method:"POST", headers:{"content-type":"application/json", "x-app-key": c.appKey || ""}, body:JSON.stringify({url, binary})}); if(!r.ok) throw new Error("helper " + r.status); return r.json(); }
+async function getPage(url){
+  const H = nativeHttp();
+  if(H){ const r = await H.get({url, headers:{"User-Agent":UA, "Accept":"text/html,application/xhtml+xml", "Accept-Language":"en-US,en;q=0.8"}, responseType:"text"}); if(r.status >= 400) throw new Error("page " + r.status); return {html:String(r.data || ""), url:r.url || url}; }
+  if(helperUrl()){ const j = await helperFetch(url, false); return {html:String(j.body || ""), url:j.url || url}; }
+  const r = await fetch(url, {credentials:"omit"}); if(!r.ok) throw new Error("page " + r.status); return {html:await r.text(), url:r.url || url};
+}
+async function getImage(url){
+  const H = nativeHttp();
+  if(H){ const r = await H.get({url, headers:{"User-Agent":UA, "Accept":"image/*"}, responseType:"blob"}); if(r.status >= 400) throw new Error("img " + r.status);
+    const ct = (r.headers && (r.headers["Content-Type"] || r.headers["content-type"])) || "image/jpeg"; return (await fetch(`data:${ct.split(";")[0]};base64,${r.data}`)).blob(); }
+  if(helperUrl()){ const j = await helperFetch(url, true); return (await fetch(`data:${j.contentType || "image/jpeg"};base64,${j.body}`)).blob(); }
+  const r = await fetch(url, {credentials:"omit"}); if(!r.ok) throw new Error("img " + r.status); return r.blob();
+}
+function parseProduct(html, base){
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const meta = k => (doc.querySelector(`meta[property="${k}"],meta[name="${k}"]`) || {}).content || "";
+  let title = "", image = "", price = "", cur = "", brand = "";
+  for(const sc of doc.querySelectorAll('script[type="application/ld+json"]')){
+    try{ const j = JSON.parse(sc.textContent); for(const o of [].concat(j && j["@graph"] || j)){ if(!o || !/Product/i.test([].concat(o["@type"]).join(" "))) continue;
+      let im = [].concat(o.image || [])[0]; if(im && typeof im === "object") im = im.url || im.contentUrl; if(!image && im) image = im;
+      if(!title && o.name) title = o.name; if(!brand && o.brand) brand = typeof o.brand === "string" ? o.brand : (o.brand.name || "");
+      const of = [].concat(o.offers || [])[0]; if(of && !price){ price = of.price || of.lowPrice || ""; cur = of.priceCurrency || ""; } } }catch(_){}
+  }
+  image = image || meta("og:image") || meta("og:image:secure_url") || meta("twitter:image");
+  title = title || meta("og:title") || meta("twitter:title") || (doc.title || "");
+  price = price || meta("product:price:amount") || meta("og:price:amount"); cur = cur || meta("product:price:currency") || meta("og:price:currency");
+  brand = brand || meta("product:brand") || meta("og:brand");
+  title = String(title).split(/\s[|–-]\s/)[0].trim();
+  let img = null; try{ img = image ? new URL(image, base).href : null; }catch(_){}
+  return {title, image: img, price: price ? `${cur ? cur + " " : ""}${price}` : "", brand: String(brand || "").trim()};
+}
+async function getFromLink(){
+  const s0 = sheet; const url = safeUrl(($("#lurl")?.value || s0.url || "").match(/https?:\/\/\S+/)?.[0]);
+  if(!url){ s0.err = "That doesn’t look like a link. It should start with https://"; renderSheet(); return; }
+  s0.url = url; s0.busy = true; s0.err = null; renderSheet();
+  try{
+    const page = await getPage(url); const pr = parseProduct(page.html, page.url);
+    if(!pr.image) throw new Error("no image");
+    const blob = await getImage(pr.image); if(!blob || !/^image\//.test(blob.type || "image/")) throw new Error("not an image");
+    if(sheet !== s0) return;
+    const extra = {toBuy:true, link:url, shop:shopName(page.url || url), price:pr.price.slice(0,20), brand:pr.brand.slice(0,30), name:pr.title.slice(0,40)};
+    if(s0.forId){ sheet = null; renderSheet(); await replacePhoto(s0.forId, blob); }
+    else { sheet = null; renderSheet(); await onPhoto(blob, extra); }
+  }catch(e){
+    if(sheet !== s0) return;
+    s0.busy = false; s0.err = "I couldn’t open that shop page from the app. No problem: take a screenshot of the product photo in the shop app, then choose it here. I’ll keep the link and cut the item out.";
+    renderSheet();
+  }
+}
+async function replacePhoto(id, file){
+  const it = store.item(id); if(!it || !file) return;
+  let ph; try{ ph = await fileToPhoto(file); }catch(e){ toast("That file is not a photo I can open."); return; }
+  let cl = null; try{ cl = cleanPhoto(ph.img); }catch(_){}
+  if(!cl || !cl.cut){ toast("That photo was too busy to cut out. Try one on a plain background."); return; }
+  const {id:_, ...rest} = it; await store.put(id, {...rest, img:cl.img, cutout:cl.cutout, fabric:cl.fabric}); render(); toast("Photo updated.");
 }
 
 /* ---------- render + events ---------- */
@@ -798,27 +871,27 @@ document.addEventListener("click", async e => {
   // sheet controls
   if(sheet && sheet.type === "item" && d.clean){ const dr = sheet.draft; dr.name = $("#iname")?.value ?? dr.name; dr.useClean = d.clean === "1"; dr.img = dr.useClean ? dr.clean : dr.raw; return renderSheet(); }
   if(sheet && sheet.type === "item" && (d.cat || d.shape)){ const dr = sheet.draft; dr.name = $("#iname")?.value ?? dr.name; dr.nameTouched = dr.nameTouched || !!dr.name; if(d.cat){ dr.category = d.cat; dr.catTouched = true; } if(d.shape) dr.shape = d.shape; return renderSheet(); }
-  if(sheet && sheet.type === "model" && d.mode){ sheet.draft.mode = d.mode; store.docs = {...store.docs, profile:{...sheet.draft}}; return renderSheet(); }
-  if(sheet && sheet.type === "model" && (d.skin || d.hs || d.hc)){ const p = sheet.draft; if(d.skin) p.skin = d.skin; if(d.hs) p.hairStyle = d.hs; if(d.hc) p.hair = d.hc; store.docs = {...store.docs, profile:{...p}}; return renderSheet(); }
   if(d.sx){
     if(d.sx === "close"){ closeSheet(); return; }
-    if(d.sx === "mephoto"){ $("#meIn").value = ""; $("#meIn").click(); return; }
-    if(d.sx === "medelete"){ if(!sheet.confirmDel){ sheet.confirmDel = true; return renderSheet(); } await store.del("me"); sheet.origMe = undefined; sheet.draft.mode = "doll"; await store.put("profile", {...sheet.draft}); sheet.orig = store.docs.profile; sheet.confirmDel = false; renderSheet(); render(); toast("Your photo is removed."); return; }
+    if(d.sx === "getlink"){ getFromLink(); return; }
+    if(d.sx === "linkshot"){ pendingPhoto = {forId:sheet.forId, extra:{toBuy:true, link:safeUrl(sheet.url) || "", shop:shopName(sheet.url)}}; $("#fileIn").value = ""; $("#fileIn").click(); return; }
+    if(d.sx === "shopphoto"){ const dr = sheet.draft; sheet = {type:"link", forId:dr.id, url:dr.link || ""}; renderSheet(); return; }
     if(d.sx === "saveitem"){
       const dr = sheet.draft; dr.name = ($("#iname")?.value || "").trim() || `${colorName(dr.colors[0] || "#888")} ${catLabel(dr.category).toLowerCase()}`;
-      if(dr.sample){ toast("Samples can’t be changed. Add your own clothes instead."); return; }
       dr.saving = true; renderSheet();
-      const data = {kind:"item", name:dr.name.slice(0,40), category:dr.category, shape:dr.category === "bottom" ? (dr.shape || "pants") : null, colors:(dr.colors||[]).map(okHex).filter(Boolean).slice(0,3), img:dr.img, fabric:dr.fabric || null, cutout:dr.cutout || null, created:dr.created || Date.now()};
+      const data = {kind:"item", name:dr.name.slice(0,40), category:dr.category, shape:dr.category === "bottom" ? (dr.shape || "pants") : null, colors:(dr.colors||[]).map(okHex).filter(Boolean).slice(0,3), img:dr.img, fabric:dr.fabric || null, cutout:dr.cutout || null, created:dr.created || Date.now(),
+        toBuy:!!dr.toBuy, brand:String(dr.brand || "").trim().slice(0,30), price:String(dr.price || "").trim().slice(0,20), link:safeUrl(dr.link) || "", shop:dr.shop || shopName(dr.link) || ""};
       try{ await store.put(dr.id, data); toast(dr.isNew ? `Added ${data.name}.` : "Saved."); if(dr.isNew) document.dispatchEvent(new CustomEvent("pmf:event", {detail:{type:"item_added"}})); closeSheet(); render(); }catch(_){ dr.saving = false; renderSheet(); }
       return;
     }
     if(d.sx === "delitem"){ const dr = sheet.draft; if(!dr.confirmDel){ dr.confirmDel = true; return renderSheet(); } await store.del(dr.id); closeSheet(); render(); toast("Deleted."); return; }
     if(d.sx === "wearitem"){ const dr = sheet.draft; S.sel[dr.category] = dr.id; if(dr.category === "dress"){ delete S.sel.top; delete S.sel.bottom; } if(dr.category==="top"||dr.category==="bottom") delete S.sel.dress; saveSel(); closeSheet(); setTab("outfit"); return; }
-    if(d.sx === "savemodel"){ const p = {...sheet.draft}; if(sheet.meDirty && store.docs.me) await store.put("me", {...store.docs.me}); await store.put("profile", p); sheet.saved = true; closeSheet(); render(); toast("Your model is saved."); return; }
     if(d.sx === "saveoutfit"){ const name = ($("#oname")?.value || "").trim() || "My outfit"; const id = uid("outfit"); await store.put(id, {kind:"outfit", name:name.slice(0,40), items:{...S.sel}, created:Date.now()}); closeSheet(); render(); toast(`Saved “${name}”.`); document.dispatchEvent(new CustomEvent("pmf:event", {detail:{type:"outfit_saved"}})); return; }
   }
   switch(d.act){
-    case "add": $("#fileIn").value = ""; $("#fileIn").click(); break;
+    case "add": pendingPhoto = null; $("#fileIn").value = ""; $("#fileIn").click(); break;
+    case "addlink": sheet = {type:"link", url:""}; renderSheet(); setTimeout(() => $("#lurl")?.focus(), 50); break;
+    case "share": if(!Object.keys(S.sel).length){ toast("Pick some clothes first."); break; } shareCollage(S.sel, "my-outfit"); break;
     case "close": S.open = null; render(); break;
     case "clear": S.sel = {}; S.ai = null; saveSel(); render(); break;
     case "shuffle": {
@@ -829,7 +902,6 @@ document.addEventListener("click", async e => {
       for(const k in sel) if(!sel[k]) delete sel[k]; S.sel = sel; S.ai = null; saveSel(); render(); break; }
     case "rate": aiRate(); document.dispatchEvent(new CustomEvent("pmf:event", {detail:{type:"ai_asked"}})); break;
     case "save": if(Object.keys(S.sel).length === 0){ toast("Pick some clothes first."); break; } sheet = {type:"name", name:""}; renderSheet(); setTimeout(() => $("#oname")?.focus(), 50); break;
-    case "model": openModelSheet(); break;
     case "suggest": S.ask.occasion = $("#occ")?.value ?? S.ask.occasion; S.ask.weather = $("#wx")?.value ?? S.ask.weather; aiSuggest(); break;
     case "usesug": if(S.ask.result){ S.sel = {...S.ask.result.sel}; S.ai = null; saveSel(); setTab("outfit"); } break;
     case "compare": aiCompare(); break;
@@ -839,13 +911,16 @@ document.addEventListener("click", async e => {
 document.addEventListener("input", e => {
   if(e.target.id === "occ") S.ask.occasion = e.target.value;
   if(e.target.id === "iname" && sheet && sheet.draft){ sheet.draft.name = e.target.value; sheet.draft.nameTouched = true; }
+  if(sheet && sheet.draft && ["ibrand","iprice","ilink"].includes(e.target.id)) sheet.draft[{ibrand:"brand", iprice:"price", ilink:"link"}[e.target.id]] = e.target.value;
+  if(e.target.id === "lurl" && sheet && sheet.type === "link") sheet.url = e.target.value;
   if(e.target.id === "icolor" && sheet && sheet.draft){ sheet.draft.colors = [e.target.value, ...(sheet.draft.colors||[]).slice(1)]; sheet.draft.colorTouched = true; }
 });
 document.addEventListener("change", e => {
   if(e.target.id === "wx") S.ask.weather = e.target.value;
   if(e.target.id === "icolor" && sheet) renderSheet();
-  if(e.target.id === "fileIn") onPhoto(e.target.files && e.target.files[0]);
-  if(e.target.id === "meIn") onMePhoto(e.target.files && e.target.files[0]);
+  if(e.target.id === "fileIn"){ const f = e.target.files && e.target.files[0]; const pp = pendingPhoto; pendingPhoto = null;
+    if(pp && pp.forId) replacePhoto(pp.forId, f); else onPhoto(f, pp && pp.extra); }
+  if(e.target.id === "ibuy" && sheet && sheet.draft) sheet.draft.toBuy = e.target.checked;
 });
 document.addEventListener("keydown", e => { if(e.key === "Escape" && sheet) closeSheet(); });
 
