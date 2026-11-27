@@ -94,8 +94,9 @@
     bg.addEventListener("click", e => { if (e.target === bg) bg.remove(); });
     const draw = (inner) => bg.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="stack">
       <div class="row between"><h2>${isOwner ? "My users" : "Your account"}</h2><button class="btn sm ghost" id="a-close">Close</button></div>${inner}
+      ${window.Capacitor ? `<button class="btn line" id="a-upd">Check for updates <span class="small muted">(version 1.0.${Number(window.PMF_BUILD) || 0})</span></button>` : ""}
       <button class="btn line" id="a-out">Sign out</button></div></div>`;
-    const wire = () => { bg.querySelector("#a-close").onclick = () => bg.remove(); bg.querySelector("#a-out").onclick = async () => { bg.remove(); await auth.signOut(); }; };
+    const wire = () => { bg.querySelector("#a-close").onclick = () => bg.remove(); bg.querySelector("#a-out").onclick = async () => { bg.remove(); await auth.signOut(); }; const u = bg.querySelector("#a-upd"); if (u) u.onclick = () => { bg.remove(); window.pmfCheckUpdate && window.pmfCheckUpdate(true); }; };
     if (!isOwner){ draw(`<p style="margin:0">Signed in as <b>${esc(me ? me.nickname : "")}</b>${me && me.email ? ` (${esc(me.email)})` : ""}.</p><p class="small muted" style="margin:0">Your clothes and photos stay on this phone.</p>`); return wire(); }
     draw(`<p class="muted">Loading users…</p>`); wire();
     try {

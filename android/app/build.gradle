@@ -7,8 +7,8 @@ android {
         applicationId "com.pickmyfit.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode Integer.parseInt(System.getenv("BUILD_NUM") ?: "1")
+        versionName "1.0." + (System.getenv("BUILD_NUM") ?: "0")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,7 +16,20 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // One fixed key for every build, so new versions install over old ones.
+    // The key file is in the repo; its password lives only in the GitHub secret ANDROID_KEY_PASSWORD.
+    signingConfigs {
+        fixed {
+            storeFile file("pickmyfit.jks")
+            storePassword System.getenv("PMF_KEY_PASS") ?: ""
+            keyAlias "pickmyfit"
+            keyPassword System.getenv("PMF_KEY_PASS") ?: ""
+        }
+    }
     buildTypes {
+        debug {
+            if (System.getenv("PMF_KEY_PASS")) signingConfig signingConfigs.fixed
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'

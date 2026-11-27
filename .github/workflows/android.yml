@@ -23,9 +23,14 @@ jobs:
       # GitHub's Ubuntu runners already include the Android SDK (ANDROID_HOME).
       - run: npm ci
       - run: npm run build && npx cap sync android
+        env:
+          BUILD_NUM: ${{ github.run_number }}
       - name: Build installable APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
+        env:
+          BUILD_NUM: ${{ github.run_number }}
+          PMF_KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
           name: PickMyFit-android

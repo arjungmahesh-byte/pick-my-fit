@@ -118,6 +118,7 @@ nav.tabs .in{display:grid;grid-template-columns:repeat(4,1fr);width:100%;max-wid
 nav.tabs button{border:0;background:none;padding:8px 4px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.72rem;font-weight:700;color:var(--muted);min-height:56px}
 nav.tabs button svg{width:24px;height:24px}
 nav.tabs button[aria-current="page"]{color:var(--accent)}
+.upd{position:fixed;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:60;display:flex;align-items:center;gap:8px;background:var(--panel);border:1.5px solid var(--accent);border-radius:16px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.18)}.upd>div{flex:1;min-width:0}.upd b{display:block}.upd span{font-size:.8rem;color:var(--muted)}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:.85rem;font-weight:500;z-index:30;max-width:90%;text-align:center}
 .empty{text-align:center;padding:24px 8px;color:var(--muted)}
 @media (max-width:380px){.builder{grid-template-columns:1fr}.stage{max-width:240px;margin:0 auto;width:100%}}
@@ -822,6 +823,51 @@ const UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, 
 function nativeHttp(){ const C = window.Capacitor; return C && C.isNativePlatform && C.isNativePlatform() && C.Plugins && C.Plugins.CapacitorHttp; }
 function helperUrl(){ const c = window.PICKMYFIT_CONFIG; return c && c.aiUrl ? c.aiUrl.replace(/\/+$/, "") + "/fetch" : null; }
 async function helperFetch(url, binary){ const c = window.PICKMYFIT_CONFIG; const r = await fetch(helperUrl(), {method:"POST", headers:{"content-type":"application/json", "x-app-key": c.appKey || ""}, body:JSON.stringify({url, binary})}); if(!r.ok) throw new Error("helper " + r.status); return r.json(); }
+/* share links (ty.gl, app.link, adj.st, bit.ly…) bounce through trackers that jump into the shop's app.
+   Walk the redirects one by one and pull the real web address out of them. */
+const WRAP_KEYS = ["adjust_redirect", "adj_redirect", "redirect", "redirect_url", "redirectUrl", "redirect_uri", "url", "u", "target", "link", "dest", "destination", "fallback_url", "$fallback_url", "$desktop_url", "$android_url", "af_web_dp", "deep_link_value", "web_url"];
+function embeddedWebUrl(u){
+  const fb = String(u).match(/browser_fallback_url=([^;&#]+)/); if(fb){ try{ const v = decodeURIComponent(fb[1]); if(/^https?:\/\//i.test(v)) return v; }catch(_){} }
+  try{ const x = new URL(u); for(const k of WRAP_KEYS){ const v = x.searchParams.get(k); if(v && /^https?:\/\//i.test(v) && !/\.(png|jpe?g|gif|webp)(\?|$)/i.test(v)) return v; } }catch(_){}
+  return null;
+}
+async function resolveLink(url){
+  const H = nativeHttp(); let cur = url;
+  for(let hop = 0; hop < 8; hop++){
+    const inner = embeddedWebUrl(cur); if(inner && inner !== cur){ cur = inner; continue; }
+    if(!H || !/^https?:/i.test(cur)) return cur;
+    let r; try{ r = await H.get({url:cur, headers:{"User-Agent":UA, "Accept":"text/html,application/xhtml+xml", "Accept-Language":"en-US,en;q=0.8"}, responseType:"text", disableRedirects:true}); }catch(_){ return cur; }
+    const h = r.headers || {}; const loc = h.Location || h.location || h.LOCATION;
+    if(r.status >= 300 && r.status < 400 && loc){ let nx; try{ nx = new URL(loc, cur).href; }catch(_){ return cur; }
+      if(!/^https?:/i.test(nx)){ const e = embeddedWebUrl(nx); if(e){ cur = e; continue; } return cur; }   // ty://, intent://, market://
+      cur = nx; continue; }
+    return cur;
+  }
+  return cur;
+}
+// "open in app" pages: find the product address written inside the page
+function pageRedirect(html, base){
+  const pats = [/http-equiv=["']?refresh["']?[^>]*content=["'][^"']*url=([^"'>]+)/i, /(?:window\.)?location(?:\.href)?\s*=\s*["'](https?:[^"']+)["']/i, /location\.replace\(\s*["'](https?:[^"']+)["']/i,
+    /<link[^>]+rel=["']canonical["'][^>]*href=["']([^"']+)["']/i, /<meta[^>]+property=["']og:url["'][^>]*content=["']([^"']+)["']/i];
+  for(const re of pats){ const m = String(html).match(re); if(m){ try{ const u = new URL(m[1].replace(/&amp;/g, "&").trim(), base).href; if(u !== base && /^https?:/i.test(u)) return u; }catch(_){} } }
+  return null;
+}
+function grabber(){ const C = window.Capacitor; if(!(C && C.isNativePlatform && C.isNativePlatform())) return null;
+  try{ return (C.Plugins && C.Plugins.PageGrab) || (C.registerPlugin ? C.registerPlugin("PageGrab") : null); }catch(_){ return null; } }
+// read a product page; if the shop blocks plain requests, open it in the app's hidden browser instead
+async function getProductPage(url, onSlow){
+  let page = null, pr = null;
+  try{ page = await getPage(url); pr = parseProduct(page.html, page.url); }catch(_){}
+  if(pr && !pr.images.length){ const nx = pageRedirect(page.html, page.url);
+    if(nx && !/bm-verify|__cf_chl|captcha|challenge/i.test(nx)){ try{ const p2 = await getPage(await resolveLink(nx)); const r2 = parseProduct(p2.html, p2.url); if(r2.images.length) return {page:p2, pr:r2}; }catch(_){} } }
+  const G = grabber();
+  if((!pr || !pr.images.length) && G && G.grab){
+    if(onSlow) onSlow();
+    try{ const g = await G.grab({url, timeoutMs:25000}); const p3 = {html:String(g.html || ""), url:g.url || url}; const r3 = parseProduct(p3.html, p3.url); if(r3.images.length || !pr){ page = p3; pr = r3; } }catch(_){}
+  }
+  if(!pr) throw new Error("page");
+  return {page, pr};
+}
 async function getPage(url){
   const H = nativeHttp();
   if(H){ const r = await H.get({url, headers:{"User-Agent":UA, "Accept":"text/html,application/xhtml+xml", "Accept-Language":"en-US,en;q=0.8"}, responseType:"text"}); if(r.status >= 400) throw new Error("page " + r.status); return {html:String(r.data || ""), url:r.url || url}; }
@@ -1005,14 +1051,16 @@ async function getFromLink(){
   if(!url){ s0.err = "That doesn’t look like a link. It should start with https://"; renderSheet(); return; }
   s0.url = url; s0.busy = true; s0.err = null; renderSheet();
   try{
-    const page = await getPage(url); const pr = parseProduct(page.html, page.url);
+    s0.status = "Opening the shop page…"; renderSheet();
+    const real = await resolveLink(url); s0.resolved = real;
+    const {page, pr} = await getProductPage(real, () => { if(sheet === s0){ s0.status = "The shop is checking the app. One moment…"; renderSheet(); } });
     if(!pr.images.length) throw new Error("no image");
     s0.status = "Finding the cleanest product photo…"; renderSheet();
     const words = pr.title + " " + url;
     const kind = /trouser|pant|jean|shorts|skirt|chino|jogger|legging|cargo/i.test(words) ? "bottom" : /shoe|sneaker|boot|loafer|sandal|heel|slipper|dress|jumpsuit|bag/i.test(words) ? null : "top";
     const blob = await pickProductShot(pr.images, kind); if(!blob){ s0.onModel = true; throw new Error("no usable image"); }
     if(sheet !== s0) return;
-    const extra = {...(kind ? {category:kind} : {}), toBuy:true, link:url, shop:shopName(page.url || url), price:pr.price.slice(0,20), brand:pr.brand.slice(0,30), name:pr.title.slice(0,40)};
+    const extra = {...(kind ? {category:kind} : {}), toBuy:true, link:safeUrl(page.url) || url, shop:shopName(page.url || url), price:pr.price.slice(0,20), brand:pr.brand.slice(0,30), name:pr.title.slice(0,40).replace(/[\s,;:|/–-]+$/, "")};
     if(s0.forId){ sheet = null; renderSheet(); await replacePhoto(s0.forId, blob); }
     else { sheet = null; renderSheet(); await onPhoto(blob, extra); }
   }catch(e){
@@ -1022,6 +1070,31 @@ async function getFromLink(){
     renderSheet();
   }
 }
+/* ---------- app updates (Android app only) ---------- */
+const RELEASES = "https://api.github.com/repos/arjungmahesh-byte/pick-my-fit/releases/latest";
+async function checkUpdate(manual){
+  const H = nativeHttp();
+  if(!H){ if(manual) toast("The website updates by itself. Just reopen it."); return; }
+  if(manual) toast("Checking for updates…");
+  try{
+    const r = await H.get({url:RELEASES, headers:{"Accept":"application/vnd.github+json", "User-Agent":"PickMyFit-app"}, responseType:"json"});
+    const j = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+    const latest = Number(String(j && j.tag_name || "").split(".").pop()) || 0, mine = Number(window.PMF_BUILD) || 0;
+    const apk = (j && j.assets || []).find(a => /\.apk$/i.test(a.name || ""));
+    if(apk && latest > mine) showUpdate(latest, apk.browser_download_url);
+    else if(manual) toast("You have the newest version.");
+  }catch(e){ if(manual) toast("Couldn’t check for updates. Try again when you’re online."); }
+}
+function showUpdate(n, url){
+  let b = $(".upd"); if(!b){ b = document.createElement("div"); b.className = "upd"; b.setAttribute("role","status"); document.body.append(b); }
+  b.innerHTML = `<div><b>A new version is ready</b><span>Tap Update, then open the download to install it. Your closet stays.</span></div><button class="btn sm" id="upd-go">Update</button><button class="btn sm ghost" id="upd-x" aria-label="Later">Later</button>`;
+  b.hidden = false;
+  $("#upd-go").onclick = () => { b.hidden = true; location.href = url; };   // opens in the phone's browser, which downloads the new app
+  $("#upd-x").onclick = () => { b.hidden = true; };
+}
+window.pmfCheckUpdate = checkUpdate;
+if(nativeHttp()) setTimeout(() => { try{ const last = +localStorage.getItem("pmf-upd-check") || 0; if(Date.now() - last > 6*36e5){ localStorage.setItem("pmf-upd-check", Date.now()); checkUpdate(false); } }catch(_){ checkUpdate(false); } }, 2500);
+
 async function replacePhoto(id, file){
   const it = store.item(id); if(!it || !file) return;
   let ph; try{ ph = await fileToPhoto(file); }catch(e){ toast("That file is not a photo I can open."); return; }
@@ -1057,7 +1130,7 @@ document.addEventListener("click", async e => {
   if(d.sx){
     if(d.sx === "close"){ closeSheet(); return; }
     if(d.sx === "getlink"){ getFromLink(); return; }
-    if(d.sx === "linkshot"){ pendingPhoto = {forId:sheet.forId, extra:{toBuy:true, link:safeUrl(sheet.url) || "", shop:shopName(sheet.url), ...guessFromUrl(sheet.url)}}; $("#fileIn").value = ""; $("#fileIn").click(); return; }
+    if(d.sx === "linkshot"){ pendingPhoto = {forId:sheet.forId, extra:{toBuy:true, link:safeUrl(sheet.resolved || sheet.url) || "", shop:shopName(sheet.resolved || sheet.url), ...guessFromUrl(sheet.resolved || sheet.url)}}; $("#fileIn").value = ""; $("#fileIn").click(); return; }
     if(d.sx === "shopphoto"){ const dr = sheet.draft; sheet = {type:"link", forId:dr.id, url:dr.link || ""}; renderSheet(); return; }
     if(d.sx === "saveitem"){
       const dr = sheet.draft; dr.name = ($("#iname")?.value || "").trim() || `${colorName(dr.colors[0] || "#888")} ${catLabel(dr.category).toLowerCase()}`;
