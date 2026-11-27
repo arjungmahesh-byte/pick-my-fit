@@ -167,7 +167,7 @@ function rgbToHex(r,g,b){ return "#" + [r,g,b].map(v => Math.max(0,Math.min(255,
 function hsl(h){ let [r,g,b] = hexToRgb(h).map(v => v/255); const mx=Math.max(r,g,b), mn=Math.min(r,g,b); let H=0,S=0; const L=(mx+mn)/2; if(mx!==mn){ const d=mx-mn; S=L>.5?d/(2-mx-mn):d/(mx+mn); H = mx===r?(g-b)/d+(g<b?6:0):mx===g?(b-r)/d+2:(r-g)/d+4; H*=60;} return {h:H,s:S,l:L}; }
 function isNeutral(h){ const c = hsl(h); return c.s < .16 || c.l < .14 || c.l > .92 || (c.h > 200 && c.h < 240 && c.l < .3); }
 function colorName(h){ const {h:H,s,l} = hsl(h); if(l<.12) return "black"; if(l>.92) return "white"; if(s<.12) return l<.4?"charcoal":l<.7?"grey":"light grey";
-  if(H>20&&H<45&&l<.45&&s<.7) return "brown"; if(H>30&&H<55&&s<.45&&l>.6) return "beige"; if(H>200&&H<245&&l<.3) return "navy";
+  if((H>20&&H<45&&l<.45&&s<.7) || ((H<20||H>345)&&l<.3&&s<.6)) return "brown"; if(H>30&&H<55&&s<.45&&l>.6) return "beige"; if(H>200&&H<245&&l<.3) return "navy";
   const names=[[12,"red"],[38,"orange"],[62,"yellow"],[85,"lime"],[160,"green"],[190,"teal"],[250,"blue"],[285,"purple"],[330,"pink"],[360,"red"]];
   return (names.find(([max]) => H < max) || names[0])[1]; }
 function harmony(colors){
@@ -757,7 +757,7 @@ function renderSheet(){
       <div class="row between"><h2>${sheet.forId ? "Use a clean shop photo" : "Add from a shop link"}</h2><button class="btn sm ghost" data-sx="close">Close</button></div>
       <p class="small muted" style="margin:0">In the Trendyol, Max or other shop app, open the item, tap <b>Share</b>, then <b>Copy link</b>. Paste it below.</p>
       <div class="field"><label for="lurl">Shop link</label><input id="lurl" type="url" inputmode="url" autocomplete="off" value="${esc(sheet.url || "")}" placeholder="https://www.trendyol.com/…"></div>
-      <button class="btn" data-sx="getlink" ${sheet.busy ? "disabled" : ""}>${sheet.busy ? "Opening the shop page…" : "Get the item"}</button>
+      <button class="btn" data-sx="getlink" ${sheet.busy ? "disabled" : ""}>${sheet.busy ? (sheet.status || "Opening the shop page…") : "Get the item"}</button>
       ${sheet.err ? `<div class="note">${esc(sheet.err)}</div><button class="btn ghost" data-sx="linkshot">Choose a screenshot</button>` : ""}
     </div>`;
   } else if(sheet.type === "name"){
@@ -803,7 +803,8 @@ function guessFromUrl(u){
     const nice = t => t.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/^./, c => c.toUpperCase());
     let i = segs.findIndex(x => /-p-\d+/.test(x)); if(i < 0){ let best = -1; segs.forEach((x, j) => { if(x.split("-").length > 2 && (best < 0 || x.length > segs[best].length)) best = j; }); i = best; }
     if(i < 0) return {};
-    const name = nice(segs[i].replace(/^buy-/i, "").replace(/-p-\d+.*$/, "").replace(/[-_]?\d{5,}.*$/, "")).slice(0, 40);
+    const words = segs[i].replace(/^buy-/i, "").replace(/-p-\d+.*$/, "").split(/[-_]+/).filter(w => !(/\d/.test(w) && w.length >= 5) && !/^\d+$/.test(w));
+    let name = nice(words.join(" ")); if(name.length > 40) name = name.slice(0, 41).replace(/\s+\S*$/, "");
     const brand = i > 0 && !/^(en|ar|ae|sa|[a-z]{2}-[a-z]{2}|product|products|p|shop|buy)$/i.test(segs[i-1]) ? nice(segs[i-1]).slice(0, 30) : "";
     return {name, brand};
   }catch(_){ return {}; }
@@ -828,20 +829,43 @@ async function getImage(url){
 function parseProduct(html, base){
   const doc = new DOMParser().parseFromString(html, "text/html");
   const meta = k => (doc.querySelector(`meta[property="${k}"],meta[name="${k}"]`) || {}).content || "";
-  let title = "", image = "", price = "", cur = "", brand = "";
+  let title = "", price = "", cur = "", brand = ""; const images = [];
+  const addImg = im => { for(const x of [].concat(im || [])){ const v = typeof x === "string" ? x : x && (x.contentUrl || x.url); if(Array.isArray(v)) addImg(v); else if(typeof v === "string") images.push(v); } };
   for(const sc of doc.querySelectorAll('script[type="application/ld+json"]')){
     try{ const j = JSON.parse(sc.textContent); for(const o of [].concat(j && j["@graph"] || j)){ if(!o || !/Product/i.test([].concat(o["@type"]).join(" "))) continue;
-      let im = [].concat(o.image || [])[0]; if(im && typeof im === "object") im = im.url || im.contentUrl; if(!image && im) image = im;
+      addImg(o.image);
       if(!title && o.name) title = o.name; if(!brand && o.brand) brand = typeof o.brand === "string" ? o.brand : (o.brand.name || "");
+      if(!brand && typeof o.manufacturer === "string") brand = o.manufacturer;
       const of = [].concat(o.offers || [])[0]; if(of && !price){ price = of.price || of.lowPrice || ""; cur = of.priceCurrency || ""; } } }catch(_){}
   }
-  image = image || meta("og:image") || meta("og:image:secure_url") || meta("twitter:image");
+  addImg(meta("og:image") || meta("og:image:secure_url") || meta("twitter:image"));
   title = title || meta("og:title") || meta("twitter:title") || (doc.title || "");
   price = price || meta("product:price:amount") || meta("og:price:amount"); cur = cur || meta("product:price:currency") || meta("og:price:currency");
-  brand = brand || meta("product:brand") || meta("og:brand");
+  brand = String(brand || meta("product:brand") || meta("og:brand") || "").trim();
+  // tidy the name: drop the brand, product codes and shop suffixes
   title = String(title).split(/\s[|–-]\s/)[0].trim();
-  let img = null; try{ img = image ? new URL(image, base).href : null; }catch(_){}
-  return {title, image: img, price: price ? `${cur ? cur + " " : ""}${price}` : "", brand: String(brand || "").trim()};
+  if(brand && title.toLowerCase().startsWith(brand.toLowerCase())) title = title.slice(brand.length).trim();
+  title = title.split(/\s+/).filter(w => !(/\d/.test(w) && /[a-z]/i.test(w) && w.length >= 6) && !/^\d+%?$/.test(w)).join(" ").replace(/\//g, " / ");
+  if(title.length > 40) title = title.slice(0, 41).replace(/\s+\S*$/, "");
+  const seen = new Set(); const list = [];
+  for(const im of images){ try{ const u = new URL(im, base).href; if(!seen.has(u)){ seen.add(u); list.push(u); } }catch(_){} }
+  return {title, images: list.slice(0, 8), price: price ? `${cur ? cur + " " : ""}${price}` : "", brand};
+}
+// shops show the item on a model first; pick the photo that is just the garment (margins all round, nothing touching the edges)
+async function pickProductShot(urls){
+  let best = null, bestScore = -1;
+  for(const u of urls){
+    try{ const blob = await getImage(u); if(!blob || !/^image\//.test(blob.type || "image/")) continue;
+      const ph = await fileToPhoto(blob); const cl = cleanPhoto(ph.img); const b = cl.box;
+      const h = b.y1 - b.y0, w = b.x1 - b.x0;
+      let score = cl.cut ? 1 : 0;
+      if(cl.cut && b.y0 > .03 && b.y1 < .97 && b.x0 > .02 && b.x1 < .98) score += 2;   // floats on the background
+      if(cl.cut && h < .9) score += 1;
+      if(score > bestScore){ bestScore = score; best = blob; }
+      if(score >= 4) break;
+    }catch(_){}
+  }
+  return best;
 }
 async function getFromLink(){
   const s0 = sheet; const url = safeUrl(($("#lurl")?.value || s0.url || "").match(/https?:\/\/\S+/)?.[0]);
@@ -849,15 +873,16 @@ async function getFromLink(){
   s0.url = url; s0.busy = true; s0.err = null; renderSheet();
   try{
     const page = await getPage(url); const pr = parseProduct(page.html, page.url);
-    if(!pr.image) throw new Error("no image");
-    const blob = await getImage(pr.image); if(!blob || !/^image\//.test(blob.type || "image/")) throw new Error("not an image");
+    if(!pr.images.length) throw new Error("no image");
+    s0.status = "Finding the cleanest product photo…"; renderSheet();
+    const blob = await pickProductShot(pr.images); if(!blob) throw new Error("no usable image");
     if(sheet !== s0) return;
     const extra = {toBuy:true, link:url, shop:shopName(page.url || url), price:pr.price.slice(0,20), brand:pr.brand.slice(0,30), name:pr.title.slice(0,40)};
     if(s0.forId){ sheet = null; renderSheet(); await replacePhoto(s0.forId, blob); }
     else { sheet = null; renderSheet(); await onPhoto(blob, extra); }
   }catch(e){
     if(sheet !== s0) return;
-    s0.busy = false; s0.err = nativeHttp() ? "That shop didn’t let the app read its page. No problem: take a screenshot of the product photo, then choose it here. I’ll fill in the name and link and cut the item out."
+    s0.busy = false; s0.status = null; s0.err = nativeHttp() ? "That shop didn’t let the app read its page. No problem: take a screenshot of the product photo, then choose it here. I’ll fill in the name and link and cut the item out."
       : "Shops don’t let the website version read their pages (the Android app can). No problem: take a screenshot of the product photo, then choose it here. I’ll fill in the name and link and cut the item out.";
     renderSheet();
   }
