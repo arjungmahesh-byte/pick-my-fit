@@ -152,12 +152,55 @@ const uid = p => p + "_" + Date.now().toString(36) + Math.random().toString(36).
 const okHex = h => /^#[0-9a-f]{6}$/i.test(String(h || "")) ? String(h).toLowerCase() : null;
 const CATS = [
   {id:"top", label:"Top", plural:"Tops"},
+  {id:"kurti", label:"Kurti", plural:"Kurtis"},
   {id:"bottom", label:"Bottom", plural:"Bottoms"},
   {id:"dress", label:"Dress", plural:"Dresses"},
   {id:"outer", label:"Layer", plural:"Jackets & layers"},
   {id:"shoes", label:"Shoes", plural:"Shoes"},
-  {id:"accessory", label:"Extra", plural:"Bags & extras"},
+  {id:"bag", label:"Bag", plural:"Bags"},
+  {id:"jewellery", label:"Jewellery", plural:"Jewellery"},
+  {id:"accessory", label:"Extra", plural:"Dupattas & extras"},
 ];
+// the second choice under a type: cut for tops and bottoms, length for kurtis
+const SHAPES = {
+  top: {label:"Style", opts:[["regular","Regular"],["crop","Crop top"],["bralette","Bralette"]], def:"regular"},
+  kurti: {label:"Length", opts:[["hip","Hip"],["thigh","Thigh"],["knee","Knee"],["calf","Calf"],["ankle","Ankle"]], def:"knee"},
+  bottom: {label:"Cut", opts:[["pants","Pants"],["leggings","Leggings"],["palazzo","Palazzo"],["shorts","Shorts"],["skirt","Skirt"]], def:"pants"},
+};
+const shapeOf = it => { const S0 = SHAPES[it && it.category]; return S0 ? (S0.opts.some(o => o[0] === it.shape) ? it.shape : S0.def) : null; };
+// one upper piece at a time: a dress, or a top or kurti over a bottom
+function fixSel(sel, cat){
+  if(cat === "dress"){ delete sel.top; delete sel.kurti; delete sel.bottom; }
+  if(cat === "top") { delete sel.kurti; delete sel.dress; }
+  if(cat === "kurti") { delete sel.top; delete sel.dress; }
+  if(cat === "bottom") delete sel.dress;
+  return sel;
+}
+// guess the type from a product name
+function catFromWords(w){
+  w = String(w || "");
+  if(/kurti|kurta|anarkali|tunic/i.test(w)){ const L = /ankle|floor|maxi/i.test(w) ? "ankle" : /calf|long kurti|long kurta/i.test(w) ? "calf" : /knee/i.test(w) ? "knee" : /short kurti|short kurta|hip/i.test(w) ? "hip" : /thigh|mid/i.test(w) ? "thigh" : null; return {category:"kurti", shape:L}; }
+  if(/bralette|bralet|bandeau/i.test(w)) return {category:"top", shape:"bralette"};
+  if(/crop/i.test(w) && !/trouser|pant|jean/i.test(w)) return {category:"top", shape:"crop"};
+  if(/legging|churidar|jegging/i.test(w)) return {category:"bottom", shape:"leggings"};
+  if(/palazzo|sharara|salwar|wide.?leg/i.test(w)) return {category:"bottom", shape:"palazzo"};
+  if(/skirt|lehenga/i.test(w)) return {category:"bottom", shape:"skirt"};
+  if(/shorts/i.test(w)) return {category:"bottom", shape:"shorts"};
+  if(/trouser|pant|jean|chino|jogger|cargo/i.test(w)) return {category:"bottom", shape:"pants"};
+  if(/necklace|earring|jhumka|bangle|bracelet|ring\b|anklet|pendant|choker|maang|nose ?pin|jewel/i.test(w)) return {category:"jewellery"};
+  if(/\bbag|handbag|clutch|tote|purse|backpack|potli|wallet/i.test(w)) return {category:"bag"};
+  if(/shoe|sneaker|boot|loafer|sandal|heel|slipper|jutti|mojari|kolhapuri|flats\b/i.test(w)) return {category:"shoes"};
+  if(/dupatta|stole|scarf|shawl|belt|cap\b|hat\b|sunglass/i.test(w)) return {category:"accessory"};
+  if(/dress|jumpsuit|gown|saree|sari/i.test(w)) return {category:"dress"};
+  if(/jacket|coat|blazer|cardigan|shrug|hoodie/i.test(w)) return {category:"outer"};
+  return null;
+}
+// kurti length from the cutout: how tall it is against its chest width
+function guessKurtiLength(url){
+  const g = garmentInfo(url); if(!g) return null;
+  const r = (1/g.ar) / Math.max(.15, g.at(.3).w);
+  return r < 1.7 ? "hip" : r < 2 ? "thigh" : r < 2.4 ? "knee" : r < 2.75 ? "calf" : "ankle";
+}
 const catLabel = id => (CATS.find(c => c.id === id) || CATS[0]).label;
 let toastT;
 function toast(msg){ let t = $(".toast"); if(!t){ t = document.createElement("div"); t.className = "toast"; t.setAttribute("role","status"); document.body.append(t);} t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2600); }
@@ -541,8 +584,8 @@ function collageSVG(sel, opts = {}){
     : `<g filter="url(#cs${n})"><clipPath id="cp${n}_${parts.length}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14"/></clipPath><image href="${esc(p.u)}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice" clip-path="url(#cp${n}_${parts.length})"/></g>`;
   const label = (item, cx, y, anchor = "middle") => { const {l1, l2} = labelOf(item); if(!l1 && !l2) return;
     labels.push(`<text x="${cx.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="${anchor}" font-family="DM Sans, Helvetica, Arial, sans-serif" fill="#1d1d1f"><tspan font-weight="700" font-size="19">${esc(l1)}</tspan>${l2 ? `<tspan x="${cx.toFixed(1)}" dy="19" font-size="15" fill="${item.toBuy ? "#b4442a" : "#4a4a4f"}" font-weight="${item.toBuy ? 700 : 500}">${esc(l2)}</tspan>` : ""}</text>`); };
-  const top = it("top"), bottom = it("bottom"), dress = it("dress"), outer = it("outer"), shoes = it("shoes"), acc = it("accessory");
-  const side = [outer, acc, shoes].filter(Boolean);
+  const kurti = it("kurti"), top = kurti || it("top"), bottom = it("bottom"), dress = it("dress"), outer = it("outer"), shoes = it("shoes"), acc = it("accessory"), bag = it("bag"), jew = it("jewellery");
+  const side = [outer, jew, bag, acc, shoes].filter(Boolean);
   const MX = side.length ? 395 : 300, MAXW = side.length ? 340 : 400;
   // main column
   if(dress){ const p = pieceOf(dress); if(!p) waiting = true; else {
@@ -552,19 +595,23 @@ function collageSVG(sel, opts = {}){
     const pt = top && pieceOf(top), pb = bottom && pieceOf(bottom);
     if((top && !pt) || (bottom && !pb)) waiting = true; else {
       // natural sizes relative to each other: the waistband matches the top's body width
+      // where the waist sits on the upper piece: a kurti covers the bottom down to its length
+      const ts = shapeOf(top), waist = kurti ? ({hip:.74, thigh:.6, knee:.44, calf:.34, ankle:.28})[ts] || .44 : ts === "bralette" ? .97 : ts === "crop" ? .92 : .82;
+      const wRow = kurti ? Math.max(.05, waist - .04) : .62;
       let Wt = pt ? 1 : 0, Ht = pt ? 1/pt.ar : 0, Wb = 0, Hb = 0;
-      if(pb){ Wb = pt ? .88*pt.at(.62).w/Math.max(.2, pb.at(.04).w) : 1; Hb = Wb/pb.ar; }
-      const overlap = pt && pb ? Ht*.18 : 0; let total = Ht + Hb - overlap;
+      if(pb){ Wb = pt ? (kurti ? .8 : .88)*pt.at(wRow).w/Math.max(.2, pb.at(.04).w) : 1; Hb = Wb/pb.ar; }
+      const overlap = pt && pb ? Ht*(1 - waist) : 0; let total = Ht + Hb - overlap;
       const k = Math.min(MAXW/Math.max(Wt, Wb), 750/total, pt && !pb ? 430*pt.ar/1 : 1e9);
       Wt*=k; Ht*=k; Wb*=k; Hb*=k; total*=k;
       let y = (VH - total)/2 + 8;
-      if(pt){ const x = MX - pt.at(.62).c*Wt; parts.push(img(pt, x, y, Wt, Ht)); label(top, MX, Math.max(22, y - 26)); }
-      if(pb){ const yb = y + Ht - overlap*k, x = MX - pb.at(.04).c*Wb; parts.push(img(pb, x, yb, Wb, Hb)); label(bottom, MX, Math.min(VH - 30, yb + Hb + 26)); }
+      // the bottom goes underneath, the top or kurti over it
+      if(pb){ const yb = y + Ht - overlap*k, xc = pt ? MX : MX, x = xc - pb.at(.04).c*Wb; parts.push(img(pb, x, yb, Wb, Hb)); label(bottom, MX, Math.min(VH - 30, yb + Hb + 26)); }
+      if(pt){ const x = MX - pt.at(wRow).c*Wt; parts.push(img(pt, x, y, Wt, Ht)); label(top, MX, Math.max(22, y - 26)); }
     }
   }
   // side column: layer, extra, shoes
   if(side.length){
-    const SX = 118, SW = 180; const slotH = {outer:300, accessory:170, shoes:190};
+    const SX = 118, SW = 180; const slotH = {outer:300, accessory:170, shoes:190, bag:190, jewellery:120};
     const want = side.map(i => slotH[i.category] || 180); const gaps = 54; let total = want.reduce((a,b)=>a+b,0) + gaps*side.length;
     const k = Math.min(1, 820/total); let y = (VH - total*k)/2 + 6;
     side.forEach((item, i) => { const p = pieceOf(item); const boxH = want[i]*k;
@@ -619,8 +666,8 @@ async function aiTag(photo){
   const r = await s.json(`You are tagging one photo of a clothing item for a personal wardrobe app.
 Reply with only JSON like {"name":"Navy striped tee","category":"top","shape":null,"colors":["#1f2a4d","#f4f4f0"],"style":"casual"}.
 - name: 2-4 words a person would use.
-- category: exactly one of top, bottom, dress, outer, shoes, accessory ("outer" = jackets, coats, cardigans, hoodies worn open).
-- shape: for bottoms one of pants, shorts, skirt; otherwise null.
+- category: exactly one of top, kurti, bottom, dress, outer, shoes, bag, jewellery, accessory ("kurti" = kurtis, kurtas and tunics; "outer" = jackets, coats, cardigans, shrugs, hoodies worn open; "accessory" = dupattas, scarves, belts, hats).
+- shape: for tops one of regular, crop, bralette; for kurtis the length, one of hip, thigh, knee, calf, ankle; for bottoms one of pants, leggings, palazzo, shorts, skirt; otherwise null.
 - colors: 1-3 hex colors of the garment itself (ignore the background), most dominant first.
 - style: one word.`, {images:[blob], modelTier:"quick"});
   return r && typeof r === "object" ? r : null;
@@ -653,14 +700,14 @@ async function aiSuggest(){
   S.ask.busy = true; S.ask.err = null; S.ask.result = null; render();
   try{
     const s = await getSample(); if(!s) throw {code:"not_granted"};
-    const r = await s.json(`You are a stylist building ONE outfit only from the person's own wardrobe below. Pick items by id. Use either a dress, or a top plus a bottom. Add a layer, shoes or an extra only if they help. Prefer good color matching.
+    const r = await s.json(`You are a stylist building ONE outfit only from the person's own wardrobe below. Pick items by id. Use either a dress, or a top or kurti plus a bottom. Add a layer, shoes, a bag, jewellery or an extra (like a dupatta) only if they help. A kurti's length is given after it; pair long kurtis with leggings or slim pants and shorter kurtis with any bottom. Prefer good color matching.
 Occasion: ${S.ask.occasion || "everyday"}
 Weather: ${S.ask.weather || "not given"}
 Wardrobe:
 ${wardrobeText()}
-Reply with only JSON: {"name":"short outfit name","items":{"top":"id or null","bottom":"id or null","dress":"id or null","outer":"id or null","shoes":"id or null","accessory":"id or null"},"why":"2 sentences, mention the colors"}`, {modelTier:"default"});
+Reply with only JSON: {"name":"short outfit name","items":{"top":"id or null","kurti":"id or null","bottom":"id or null","dress":"id or null","outer":"id or null","shoes":"id or null","bag":"id or null","jewellery":"id or null","accessory":"id or null"},"why":"2 sentences, mention the colors"}`, {modelTier:"default"});
     const sel = {}; for(const c of CATS){ const id = r && r.items && r.items[c.id]; if(id && store.item(id) && store.item(id).category === c.id) sel[c.id] = id; }
-    if(sel.dress){ delete sel.top; delete sel.bottom; }
+    if(sel.dress) fixSel(sel, "dress"); else if(sel.kurti) fixSel(sel, "kurti");
     if(!Object.keys(sel).length) throw {code:"invalid_json"};
     S.ask.result = {name: String(r.name || "Suggested outfit"), why: String(r.why || ""), sel};
   }catch(e){ S.ask.err = aiErr(e); }
@@ -779,6 +826,8 @@ function renderSheet(){
   let html = "";
   if(sheet.type === "item"){
     const d = sheet.draft;
+    const shapeSrc = d.cutout || d.img; if(shapeSrc) garmentInfo(shapeSrc);   // measure it early, for the kurti length guess
+    if(d.category === "kurti" && !d.shapeTouched && !d.shape) d.shape = catFromWords(d.name)?.shape || guessKurtiLength(shapeSrc) || null;
     html = `<div class="stack">
       <div class="row between"><h2>${d.isNew ? "Add to closet" : "Edit item"}</h2><button class="btn sm ghost" data-sx="close">Close</button></div>
       <img class="preview" src="${esc(d.img)}" alt="">
@@ -787,7 +836,7 @@ function renderSheet(){
       ${d.tagging ? `<p class="small muted" aria-live="polite">The AI is reading the colors and type…</p>` : d.tagNote ? `<p class="small muted">${esc(d.tagNote)}</p>` : ""}
       <div class="field"><label for="iname">Name</label><input id="iname" value="${esc(d.name)}" placeholder="Blue denim jacket"></div>
       <div class="field"><label>Type</label><div class="seg">${CATS.map(c => `<button class="chip" data-cat="${c.id}" aria-pressed="${d.category===c.id}">${c.label}</button>`).join("")}</div></div>
-      ${d.category === "bottom" ? `<div class="field"><label>Cut</label><div class="seg">${["pants","shorts","skirt"].map(s => `<button class="chip" data-shape="${s}" aria-pressed="${(d.shape||"pants")===s}">${s[0].toUpperCase()+s.slice(1)}</button>`).join("")}</div></div>` : ""}
+      ${SHAPES[d.category] ? `<div class="field"><label>${SHAPES[d.category].label}</label><div class="seg">${SHAPES[d.category].opts.map(([v,l]) => `<button class="chip" data-shape="${v}" aria-pressed="${shapeOf(d)===v}">${l}</button>`).join("")}</div>${d.category === "kurti" ? `<p class="small muted" style="margin:4px 0 0">Where the kurti ends on the body. Outfits show it at this length over your bottoms.</p>` : ""}</div>` : ""}
       <div class="field"><label>Main color</label><div class="row">${(d.colors||[]).map((h,i) => `<span class="sw" style="width:26px;height:26px;background:${okHex(h)||"#999"}"></span>`).join("")}<input type="color" id="icolor" value="${okHex(d.colors && d.colors[0]) || "#888888"}" aria-label="Pick main color" style="width:44px;height:36px;border:0;background:none;padding:0"><span class="small muted">${esc(colorName(d.colors && d.colors[0] || "#888888"))}</span></div></div>
       <label class="toggle"><input type="checkbox" id="ibuy" ${d.toBuy ? "checked" : ""}><span><b>Still to buy</b><br><span class="small muted">Shows a “To buy” tag. Untick it once you own it.</span></span></label>
       <div class="row" style="gap:10px;align-items:flex-start"><div class="field" style="flex:1;min-width:130px"><label for="ibrand">Brand or shop</label><input id="ibrand" value="${esc(d.brand || "")}" placeholder="Zara"></div><div class="field" style="flex:1;min-width:110px"><label for="iprice">Price</label><input id="iprice" value="${esc(d.price || "")}" placeholder="AED 99"></div></div>
@@ -828,7 +877,7 @@ async function onPhoto(file, extra0){
       if(t){
         if(!draft.nameTouched && t.name) draft.name = String(t.name).slice(0,40);
         if(!draft.catTouched && CATS.some(c => c.id === t.category)) draft.category = t.category;
-        if(["pants","shorts","skirt"].includes(t.shape)) draft.shape = t.shape;
+        if(SHAPES[draft.category] && SHAPES[draft.category].opts.some(o => o[0] === t.shape) && !draft.shapeTouched) draft.shape = t.shape;
         const hx = Array.isArray(t.colors) ? t.colors.map(okHex).filter(Boolean).slice(0,3) : [];
         if(hx.length && !draft.colorTouched) draft.colors = hx;
         draft.tagNote = "Filled in by the AI. Fix anything that looks wrong.";
@@ -1104,10 +1153,11 @@ async function getFromLink(){
     if(!pr.images.length) throw new Error("no image");
     s0.status = "Finding the cleanest product photo…"; renderSheet();
     const words = pr.title + " " + url;
-    const kind = /trouser|pant|jean|shorts|skirt|chino|jogger|legging|cargo/i.test(words) ? "bottom" : /shoe|sneaker|boot|loafer|sandal|heel|slipper|dress|jumpsuit|bag/i.test(words) ? null : "top";
+    const guess = catFromWords(pr.title) || catFromWords(words);
+    const kind = guess ? (guess.category === "bottom" ? "bottom" : ["top","kurti","outer"].includes(guess.category) ? "top" : null) : "top";
     const blob = await pickProductShot(pr.images, kind); if(!blob){ s0.onModel = true; throw new Error("no usable image"); }
     if(sheet !== s0) return;
-    const extra = {...(blob.__mask ? {__mask:blob.__mask} : {}), ...(kind ? {category:kind} : {}), toBuy:true, link:safeUrl(page.url) || url, shop:shopName(page.url || url), price:pr.price.slice(0,20), brand:pr.brand.slice(0,30), name:pr.title.slice(0,40).replace(/[\s,;:|/–-]+$/, "")};
+    const extra = {...(blob.__mask ? {__mask:blob.__mask} : {}), ...(guess ? {category:guess.category, ...(guess.shape ? {shape:guess.shape, shapeTouched:true} : {})} : kind ? {category:kind} : {}), toBuy:true, link:safeUrl(page.url) || url, shop:shopName(page.url || url), price:pr.price.slice(0,20), brand:pr.brand.slice(0,30), name:pr.title.slice(0,40).replace(/[\s,;:|/–-]+$/, "")};
     if(s0.forId){ sheet = null; renderSheet(); await replacePhoto(s0.forId, blob); }
     else { sheet = null; renderSheet(); await onPhoto(blob, extra); }
   }catch(e){
@@ -1165,15 +1215,15 @@ document.addEventListener("click", async e => {
   if(d.filter){ S.filter = d.filter; return render(); }
   if(d.item) return openItem(d.item);
   if(d.slot){ S.open = S.open === d.slot ? null : d.slot; return render(); }
-  if("pick" in d){ const cat = S.open; if(d.pick){ S.sel[cat] = d.pick; if(cat === "dress"){ delete S.sel.top; delete S.sel.bottom; } if(cat === "top" || cat === "bottom") delete S.sel.dress; } else delete S.sel[cat]; saveSel(); return render(); }
-  if(d.swap){ const it = store.item(d.swap); if(it){ S.sel[it.category] = it.id; if(it.category === "dress"){ delete S.sel.top; delete S.sel.bottom; } if(it.category==="top"||it.category==="bottom") delete S.sel.dress; saveSel(); S.ai = null; render(); } return; }
+  if("pick" in d){ const cat = S.open; if(d.pick){ S.sel[cat] = d.pick; fixSel(S.sel, cat); } else delete S.sel[cat]; saveSel(); return render(); }
+  if(d.swap){ const it = store.item(d.swap); if(it){ S.sel[it.category] = it.id; fixSel(S.sel, it.category); saveSel(); S.ai = null; render(); } return; }
   if(d.wear){ const o = store.outfits().find(x => x.id === d.wear); if(o){ S.sel = {...o.items}; saveSel(); S.ai = null; setTab("outfit"); } return; }
   if(d.delo){ if(b.dataset.confirm){ await store.del(d.delo); S.compare = S.compare.filter(x => x !== d.delo); render(); toast("Outfit deleted."); } else { b.dataset.confirm = "1"; b.textContent = "Sure?"; } return; }
   if(d.cmp){ const i = S.compare.indexOf(d.cmp); if(i >= 0) S.compare.splice(i,1); else { S.compare.push(d.cmp); if(S.compare.length > 2) S.compare.shift(); } S.cmp = null; return render(); }
   if(d.occ){ S.ask.occasion = d.occ; return render(); }
   // sheet controls
   if(sheet && sheet.type === "item" && d.clean){ const dr = sheet.draft; dr.name = $("#iname")?.value ?? dr.name; dr.useClean = d.clean === "1"; dr.img = dr.useClean ? dr.clean : dr.raw; return renderSheet(); }
-  if(sheet && sheet.type === "item" && (d.cat || d.shape)){ const dr = sheet.draft; dr.name = $("#iname")?.value ?? dr.name; dr.nameTouched = dr.nameTouched || !!dr.name; if(d.cat){ dr.category = d.cat; dr.catTouched = true; } if(d.shape) dr.shape = d.shape; return renderSheet(); }
+  if(sheet && sheet.type === "item" && (d.cat || d.shape)){ const dr = sheet.draft; dr.name = $("#iname")?.value ?? dr.name; dr.nameTouched = dr.nameTouched || !!dr.name; if(d.cat){ dr.category = d.cat; dr.catTouched = true; if(!dr.shapeTouched || !SHAPES[d.cat] || !SHAPES[d.cat].opts.some(o => o[0] === dr.shape)){ dr.shape = d.cat === "kurti" ? (catFromWords(dr.name)?.shape || guessKurtiLength(dr.cutout || dr.img) || "knee") : null; dr.shapeTouched = false; } } if(d.shape){ dr.shape = d.shape; dr.shapeTouched = true; } return renderSheet(); }
   if(d.sx){
     if(d.sx === "close"){ closeSheet(); return; }
     if(d.sx === "getlink"){ getFromLink(); return; }
@@ -1183,13 +1233,13 @@ document.addEventListener("click", async e => {
       const dr = sheet.draft; dr.name = ($("#iname")?.value || "").trim() || `${colorName(dr.colors[0] || "#888")} ${catLabel(dr.category).toLowerCase()}`;
       if(dr.sample){ toast("Examples can’t be changed. Add your own clothes instead."); return; }
       dr.saving = true; renderSheet();
-      const data = {kind:"item", name:dr.name.slice(0,40), category:dr.category, shape:dr.category === "bottom" ? (dr.shape || "pants") : null, colors:(dr.colors||[]).map(okHex).filter(Boolean).slice(0,3), img:dr.img, fabric:dr.fabric || null, cutout:dr.cutout || null, created:dr.created || Date.now(),
+      const data = {kind:"item", name:dr.name.slice(0,40), category:dr.category, shape:shapeOf(dr), colors:(dr.colors||[]).map(okHex).filter(Boolean).slice(0,3), img:dr.img, fabric:dr.fabric || null, cutout:dr.cutout || null, created:dr.created || Date.now(),
         toBuy:!!dr.toBuy, brand:String(dr.brand || "").trim().slice(0,30), price:String(dr.price || "").trim().slice(0,20), link:safeUrl(dr.link) || "", shop:dr.shop || shopName(dr.link) || ""};
       try{ await store.put(dr.id, data); toast(dr.isNew ? `Added ${data.name}.` : "Saved."); if(dr.isNew) document.dispatchEvent(new CustomEvent("pmf:event", {detail:{type:"item_added"}})); closeSheet(); render(); }catch(_){ dr.saving = false; renderSheet(); }
       return;
     }
     if(d.sx === "delitem"){ const dr = sheet.draft; if(!dr.confirmDel){ dr.confirmDel = true; return renderSheet(); } await store.del(dr.id); closeSheet(); render(); toast("Deleted."); return; }
-    if(d.sx === "wearitem"){ const dr = sheet.draft; S.sel[dr.category] = dr.id; if(dr.category === "dress"){ delete S.sel.top; delete S.sel.bottom; } if(dr.category==="top"||dr.category==="bottom") delete S.sel.dress; saveSel(); closeSheet(); setTab("outfit"); return; }
+    if(d.sx === "wearitem"){ const dr = sheet.draft; S.sel[dr.category] = dr.id; fixSel(S.sel, dr.category); saveSel(); closeSheet(); setTab("outfit"); return; }
     if(d.sx === "saveoutfit"){ const name = ($("#oname")?.value || "").trim() || "My outfit"; const id = uid("outfit"); await store.put(id, {kind:"outfit", name:name.slice(0,40), items:{...S.sel}, created:Date.now()}); closeSheet(); render(); toast(`Saved “${name}”.`); document.dispatchEvent(new CustomEvent("pmf:event", {detail:{type:"outfit_saved"}})); return; }
   }
   switch(d.act){
@@ -1201,8 +1251,12 @@ document.addEventListener("click", async e => {
     case "shuffle": {
       const by = c => store.items().filter(i => i.category === c); const pick = a => a.length ? a[Math.floor(Math.random()*a.length)].id : undefined;
       const useDress = by("dress").length && Math.random() < .3; const sel = {};
-      if(useDress) sel.dress = pick(by("dress")); else { sel.top = pick(by("top")); sel.bottom = pick(by("bottom")); }
+      const useKurti = !useDress && by("kurti").length && (!by("top").length || Math.random() < .5);
+      if(useDress) sel.dress = pick(by("dress")); else { if(useKurti) sel.kurti = pick(by("kurti")); else sel.top = pick(by("top"));
+        const bs = by("bottom"), slim = bs.filter(b => ["leggings","palazzo","pants"].includes(shapeOf(b)));   // long kurtis sit best over leggings, palazzos or pants
+        sel.bottom = pick(useKurti && ["calf","ankle","knee"].includes(shapeOf(store.item(sel.kurti))) && slim.length ? slim : bs); }
       if(Math.random() < .5) sel.outer = pick(by("outer")); sel.shoes = pick(by("shoes"));
+      if(Math.random() < .5) sel.bag = pick(by("bag")); if(Math.random() < .6) sel.jewellery = pick(by("jewellery")); if(useKurti && Math.random() < .5) sel.accessory = pick(by("accessory"));
       for(const k in sel) if(!sel[k]) delete sel[k]; S.sel = sel; S.ai = null; saveSel(); render(); break; }
     case "rate": aiRate(); document.dispatchEvent(new CustomEvent("pmf:event", {detail:{type:"ai_asked"}})); break;
     case "save": if(Object.keys(S.sel).length === 0){ toast("Pick some clothes first."); break; } sheet = {type:"name", name:""}; renderSheet(); setTimeout(() => $("#oname")?.focus(), 50); break;
