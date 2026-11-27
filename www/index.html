@@ -2,6 +2,15 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#eef0f4">
 <title>Pick My Fit</title>
+<meta name="description" content="Choose what to wear from your own closet. Add clothes from any shop link.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Pick My Fit">
+<meta property="og:title" content="Pick My Fit">
+<meta property="og:description" content="Choose what to wear from your own closet. Add clothes from any shop link.">
+<meta property="og:url" content="https://arjungmahesh-byte.github.io/pick-my-fit/">
+<meta property="og:image" content="https://arjungmahesh-byte.github.io/pick-my-fit/icons/og.jpg">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -9,7 +18,7 @@
 <meta name="apple-mobile-web-app-title" content="Pick My Fit">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
-<script src="version.js"></script><script src="config.js"></script><script src="native-shim.js"></script>
+<script src="version.js"></script><script>window.PMF_ML = "vendor/ml/";</script><script src="config.js"></script><script src="native-shim.js"></script>
 <script src="vendor/firebase-app-compat.js"></script><script src="vendor/firebase-auth-compat.js"></script><script src="vendor/firebase-firestore-compat.js"></script>
 </head><body><title>Pick My Fit</title>
 <meta name="claude:viewport-fit-sides" content="cover">
@@ -246,7 +255,29 @@ async function dataUrlToBlob(u){ return (await fetch(u)).blob(); }
 
 /* ---------- photo cleanup: cut out the background, crop, center on a clean card ---------- */
 const CARD_BG = "#f2f3f6";
-function cleanPhoto(img){
+/* AI background removal (u2netp, Apache-2.0) in the app and website; skipped where it isn't bundled */
+let mlSess = null, mlOff = false;
+function loadScript(src){ return new Promise((ok, no) => { const sc = document.createElement("script"); sc.src = src; sc.onload = ok; sc.onerror = no; document.head.append(sc); }); }
+async function mlMask(img){
+  if(mlOff || !window.PMF_ML) return null;
+  try{
+    const base = new URL(window.PMF_ML, location.href).href;
+    if(!window.ort) await loadScript(base + "ort.wasm.min.js");
+    ort.env.wasm.numThreads = 1; ort.env.wasm.wasmPaths = base;
+    if(!mlSess) mlSess = await ort.InferenceSession.create(base + "u2netp.onnx");
+    const S = 320, c = document.createElement("canvas"); c.width = S; c.height = S; const x = c.getContext("2d", {willReadFrequently:true});
+    x.imageSmoothingQuality = "high"; x.drawImage(img, 0, 0, S, S); const d = x.getImageData(0, 0, S, S).data;
+    const f = new Float32Array(3*S*S); let mx = 1; for(let i=0;i<d.length;i+=4) mx = Math.max(mx, d[i], d[i+1], d[i+2]);
+    const mean = [.485, .456, .406], sd = [.229, .224, .225];
+    for(let i=0;i<S*S;i++) for(let ch=0;ch<3;ch++) f[ch*S*S+i] = (d[i*4+ch]/mx - mean[ch]) / sd[ch];
+    const out = await mlSess.run({[mlSess.inputNames[0]]: new ort.Tensor("float32", f, [1,3,S,S])}); const o = out[mlSess.outputNames[0]].data;
+    let lo = Infinity, hi = -Infinity; for(const v of o){ if(v < lo) lo = v; if(v > hi) hi = v; } if(hi - lo < 1e-6) return null;
+    const m = document.createElement("canvas"); m.width = S; m.height = S; const mx2 = m.getContext("2d"); const md = mx2.createImageData(S, S);
+    for(let i=0;i<S*S;i++) md.data[i*4+3] = Math.round(255*(o[i]-lo)/(hi-lo)); mx2.putImageData(md, 0, 0);
+    return m;
+  }catch(e){ mlOff = true; return null; }
+}
+function cleanPhoto(img, ml){
   const MAX = 560; const s = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
   const W = Math.max(8, Math.round(img.naturalWidth*s)), H = Math.max(8, Math.round(img.naturalHeight*s)), N = W*H;
   const src = document.createElement("canvas"); src.width = W; src.height = H; const sx = src.getContext("2d", {willReadFrequently:true});
@@ -309,6 +340,14 @@ function cleanPhoto(img){
   // 4. soften the cut edge a little
   if(cut){ const a2 = alpha.slice(); for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){ const i=y*W+x; if(!alpha[i]) continue; const nb = alpha[i-1]+alpha[i+1]+alpha[i-W]+alpha[i+W]; if(nb < 1020) a2[i] = 150; } alpha.set(a2); }
   else { alpha.fill(255); x0=0; y0=0; x1=W-1; y1=H-1; }
+  // 4b. the AI cut-out (when it ran) replaces the color-based one: cleaner, smoother edges
+  let mlOk = false;
+  if(ml){ const mc0 = document.createElement("canvas"); mc0.width = W; mc0.height = H; const m0 = mc0.getContext("2d", {willReadFrequently:true});
+    m0.imageSmoothingQuality = "high"; m0.drawImage(ml, 0, 0, W, H); const md0 = m0.getImageData(0, 0, W, H).data;
+    let n = 0, a0 = W, b0 = H, a1 = 0, b1 = 0;
+    for(let i=0;i<N;i++){ if(md0[i*4+3] > 128){ n++; const x=i%W, y=(i-x)/W; if(x<a0)a0=x; if(x>a1)a1=x; if(y<b0)b0=y; if(y>b1)b1=y; } }
+    if(n > N*.03 && n < N*.93){ mlOk = true; cut = true; x0=a0; y0=b0; x1=a1; y1=b1;
+      for(let i=0;i<N;i++){ const v = md0[i*4+3]; alpha[i] = v < 40 ? 0 : v > 215 ? 255 : Math.round((v-40)*255/175); } } }
   // 5. gentle auto-levels on the garment so dim photos look brighter
   const lum = []; for(let i=0;i<N;i+=3) if(alpha[i]) { const k=i*4; lum.push(.299*d[k]+.587*d[k+1]+.114*d[k+2]); }
   lum.sort((a,b)=>a-b); const lo = lum[Math.floor(lum.length*.01)]||0, lumHi = lum[Math.floor(lum.length*.99)]||255;
@@ -320,7 +359,12 @@ function cleanPhoto(img){
   const hi = document.createElement("canvas"); hi.width = HW; hi.height = HH; const hx = hi.getContext("2d", {willReadFrequently:true});
   hx.imageSmoothingQuality = "high"; hx.drawImage(img, 0, 0, HW, HH);
   { const hd = hx.getImageData(0,0,HW,HH); const p = hd.data; for(let k=0;k<p.length;k+=4) for(let c=0;c<3;c++){ const v=(p[k+c]-off)*gain; p[k+c] = p[k+c]*.4 + v*.6; } hx.putImageData(hd,0,0); }
-  if(cut){ const mc = document.createElement("canvas"); mc.width = W; mc.height = H; const mx = mc.getContext("2d"); const md = mx.createImageData(W,H); for(let i=0;i<N;i++) md.data[i*4+3] = alpha[i]; mx.putImageData(md,0,0);
+  if(cut && mlOk){ // scale the AI mask straight to full size and firm up its edge
+    const mh = document.createElement("canvas"); mh.width = HW; mh.height = HH; const mhx = mh.getContext("2d", {willReadFrequently:true});
+    mhx.imageSmoothingQuality = "high"; mhx.drawImage(ml, 0, 0, HW, HH); const mhd = mhx.getImageData(0, 0, HW, HH);
+    for(let k=3;k<mhd.data.length;k+=4){ const v = mhd.data[k]; mhd.data[k] = v < 70 ? 0 : v > 185 ? 255 : Math.round((v-70)*255/115); }
+    mhx.putImageData(mhd, 0, 0); hx.globalCompositeOperation = "destination-in"; hx.drawImage(mh, 0, 0); hx.globalCompositeOperation = "source-over"; }
+  else if(cut){ const mc = document.createElement("canvas"); mc.width = W; mc.height = H; const mx = mc.getContext("2d"); const md = mx.createImageData(W,H); for(let i=0;i<N;i++) md.data[i*4+3] = alpha[i]; mx.putImageData(md,0,0);
     hx.globalCompositeOperation = "destination-in"; hx.drawImage(mc, 0, 0, HW, HH); hx.globalCompositeOperation = "source-over"; }
   const kx = HW/W, ky = HH/H;
   // 6. colors, from garment pixels only
@@ -792,10 +836,11 @@ function renderSheet(){
 }
 function openItem(id){ const it = store.item(id); if(!it) return; sheet = {type:"item", draft:{...it, colors:[...(it.colors||[])], isNew:false}}; renderSheet(); }
 
-async function onPhoto(file, extra){
+async function onPhoto(file, extra0){
   if(!file) return;
+  const {__mask, ...extra} = extra0 || {};
   let ph; try{ ph = await fileToPhoto(file); }catch(e){ toast("That file is not a photo I can open."); return; }
-  let cl = null; try{ cl = cleanPhoto(ph.img); }catch(e){ cl = null; }
+  let cl = null; const ml = __mask || await mlMask(ph.img); try{ cl = cleanPhoto(ph.img, ml); }catch(e){ try{ cl = cleanPhoto(ph.img); }catch(_){ cl = null; } }
   const colors = cl ? cl.colors : await extractColors(ph.img).catch(() => ["#888888"]);
   const draft = {isNew:true, id:uid("item"), kind:"item", raw:ph.dataUrl, clean:cl && cl.img, useClean:!!(cl && cl.cut), cleanFailed:!(cl && cl.cut), img:cl && cl.cut ? cl.img : ph.dataUrl, fabric:cl ? cl.fabric : null, cutout:cl ? cl.cutout : null, name:"", category:CATS.some(c => c.id === S.filter) ? S.filter : "top", shape:null, colors, tagging:true, ...(extra || {})};
   sheet = {type:"item", draft}; renderSheet();
@@ -921,7 +966,7 @@ function parseProduct(html, base){
 }
 // shops show the item on a model first; pick the photo that is just the garment (margins all round, nothing touching the edges)
 /* cut one garment out of a photo of someone wearing it: grow from the middle of where that garment sits */
-function segWorn(img, kind){
+function segWorn(img, kind, ml){
   const nw = img.naturalWidth || img.width, nh = img.naturalHeight || img.height;
   const k = Math.min(1, 520 / Math.max(nw, nh)), W = Math.round(nw*k), H = Math.round(nh*k);
   const c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d", {willReadFrequently:true});
@@ -942,7 +987,8 @@ function segWorn(img, kind){
   const dist = (o, q) => Math.hypot(d[o]-q[0], d[o+1]-q[1], d[o+2]-q[2]);
   const T = Math.max(34, Math.min(100, .36*Math.hypot(s[0]-bg[0], s[1]-bg[1], s[2]-bg[2])));
   const chroma = Math.max(s[0], s[1], s[2]) - Math.min(s[0], s[1], s[2]) + 26;   // shadowed hands are warmer than a neutral garment
-  const ok = new Uint8Array(N); for(let i = 0; i < N; i++){ const o = i*4; ok[i] = dist(o, s) < T && dist(o, s) < dist(o, bg) && !isSkin(o) && Math.max(d[o], d[o+1], d[o+2]) - Math.min(d[o], d[o+1], d[o+2]) < chroma ? 1 : 0; }
+  let mlA = null; if(ml){ const q0 = document.createElement("canvas"); q0.width = W; q0.height = H; const q0x = q0.getContext("2d", {willReadFrequently:true}); q0x.drawImage(ml, 0, 0, W, H); mlA = q0x.getImageData(0, 0, W, H).data; }
+  const ok = new Uint8Array(N); for(let i = 0; i < N; i++){ const o = i*4; ok[i] = dist(o, s) < T && dist(o, s) < dist(o, bg) && !isSkin(o) && Math.max(d[o], d[o+1], d[o+2]) - Math.min(d[o], d[o+1], d[o+2]) < chroma && (!mlA || mlA[i*4+3] > 110) ? 1 : 0; }
   // open (erode then dilate) to cut thin bridges to chairs and furniture
   // square erosion/dilation, separable with running sums (fast for big radii)
   const morph = (a, r, grow) => { const tmp = new Uint8Array(N), out = new Uint8Array(N), need = grow ? 1 : 2*r + 1;
@@ -966,9 +1012,9 @@ function segWorn(img, kind){
   if(best < 0 || bestN < N*.03) return null;
   let mask = new Uint8Array(N); for(let i = 0; i < N; i++) mask[i] = lab[i] === best ? 1 : 0;
   { const gr = morph(mask, 2, true); for(let i = 0; i < N; i++) mask[i] = gr[i] && ok[i] ? 1 : mask[i]; }
-  { const RB = Math.max(6, Math.round(W/(kind === "bottom" ? 34 : 26))); const core = morph(morph(mask, RB, false), RB + 2, true);
+  if(!mlA){ const RB = Math.max(6, Math.round(W/(kind === "bottom" ? 34 : 26))); const core = morph(morph(mask, RB, false), RB + 2, true);
     let left = 0; for(let i = 0; i < N; i++){ mask[i] = mask[i] && core[i] ? 1 : 0; left += mask[i]; } if(left < N*.03) return null; }
-  if(kind === "bottom"){   // legs are the tallest thing: drop short furniture beside them
+  if(kind === "bottom" && !mlA){   // legs are the tallest thing: drop short furniture beside them
     const col = new Int32Array(W); let mx = 0; for(let i = 0; i < N; i++) if(mask[i]) col[i % W]++;
     for(let xx = 0; xx < W; xx++) mx = Math.max(mx, col[xx]);
     let cx = 0, cw = 0; for(const st of seeds) if(mask[st]){ cx += st % W; cw++; } cx = cw ? Math.round(cx / cw) : W >> 1;
@@ -997,7 +1043,7 @@ function segWorn(img, kind){
       while(h2 < t2){ const p = q[h2++], px = p % W, py = (p / W) | 0;
         for(const nb of [px > 0 ? p-1 : -1, px < W-1 ? p+1 : -1, py > 0 ? p-W : -1, py < H-1 ? p+W : -1]) if(nb >= 0 && !mask[nb] && !out[nb] && !seen[nb]){ seen[nb] = 1; q[t2++] = nb; } }
       if(t2 > N*.004) for(let j = 0; j < t2; j++) out[q[j]] = 1; } }
-  if(kind === "bottom"){   // drop short sideways slabs (chair seats, hands): every column run must be tall
+  if(kind === "bottom" && !mlA){   // drop short sideways slabs (chair seats, hands): every column run must be tall
     const L = Math.round(H/20);
     for(let xx = 0; xx < W; xx++){ let y = 0; while(y < H){ if(out[y*W + xx]){ y++; continue; } let e = y; while(e < H && !out[e*W + xx]) e++;
       if(e - y < L) for(let k2 = y; k2 < e; k2++) out[k2*W + xx] = 1; y = e; } }
@@ -1005,8 +1051,13 @@ function segWorn(img, kind){
   let x0 = W, y0 = H, x1 = 0, y1 = 0;
   for(let i = 0; i < N; i++){ mask[i] = out[i] ? 0 : 1; if(mask[i]){ const px = i % W, py = (i / W) | 0; if(px < x0) x0 = px; if(px > x1) x1 = px; if(py < y0) y0 = py; if(py > y1) y1 = py; } }
   // touching the left/right edge means it ran into the room: give up
-  if(x0 <= 1 || x1 >= W-2) return null;
-  { const er = morph(mask, 1, false); for(let i = 0; i < N; i++) mask[i] = er[i]; }   // pull the edge in a touch: no light halo
+  if(!mlA && (x0 <= 1 || x1 >= W-2)) return null;
+  { const er = morph(mask, mlA ? 2 : 1, false); for(let i = 0; i < N; i++) mask[i] = er[i]; }   // pull the edge in a touch: no light halo
+  if(mlA && kind === "bottom"){   // close the waistband where drawstrings or a belt hang over it
+    let t0 = H, t1 = 0; for(let i=0;i<N;i++) if(mask[i]){ const y = (i / W) | 0; if(y < t0) t0 = y; if(y > t1) t1 = y; }
+    const lim = t0 + Math.round((t1 - t0) * .19);
+    for(let y = t0; y <= lim; y++){ let l = -1, r = -1; for(let xx = 0; xx < W; xx++) if(mask[y*W + xx]){ if(l < 0) l = xx; r = xx; }
+      for(let xx = l; l >= 0 && xx <= r; xx++){ const i = y*W + xx; if(!mask[i] && !isSkin(i*4)) mask[i] = 1; } } }
   let inC = 0, tot = 0; for(let i = 0; i < N; i++) if(mask[i]){ tot++; if(dist(i*4, s) < T*.6) inC++; }
   const purity = tot ? inC / tot : 0;
   const mc = document.createElement("canvas"); mc.width = W; mc.height = H; const mx = mc.getContext("2d"); const md = mx.createImageData(W, H);
@@ -1015,10 +1066,11 @@ function segWorn(img, kind){
   const K = Math.min(1, 1200 / Math.max(nw, nh)), FW = Math.round(nw*K), FH = Math.round(nh*K), f = FW / W;
   const gx = Math.round(x0*f), gy = Math.round(y0*f), gw = Math.round((x1-x0+1)*f), gh = Math.round((y1-y0+1)*f);
   const g = document.createElement("canvas"); g.width = FW; g.height = FH; const gc = g.getContext("2d");
-  gc.drawImage(img, 0, 0, FW, FH); gc.globalCompositeOperation = "destination-in"; gc.filter = "blur(" + (f*1.3).toFixed(1) + "px)"; gc.drawImage(mc, 0, 0, FW, FH); gc.filter = "none";
+  gc.drawImage(img, 0, 0, FW, FH); gc.globalCompositeOperation = "destination-in"; gc.filter = "blur(" + (f*(mlA ? .5 : 1.3)).toFixed(1) + "px)"; gc.drawImage(mc, 0, 0, FW, FH); gc.filter = "none";
   const pad = Math.round(Math.max(gw, gh)*.12), o = document.createElement("canvas"); o.width = gw + pad*2; o.height = gh + pad*2;
   const oc = o.getContext("2d"); oc.fillStyle = "#f3f3f1"; oc.fillRect(0, 0, o.width, o.height); oc.drawImage(g, gx, gy, gw, gh, pad, pad, gw, gh);
-  o.purity = purity; return o;
+  const om = document.createElement("canvas"); om.width = o.width; om.height = o.height; om.getContext("2d").drawImage(g, gx, gy, gw, gh, pad, pad, gw, gh);
+  o.purity = purity; o.mask = om; return o;   // o.mask: the exact garment shape, so the next step doesn't cut it again
 }
 /* how "product-page" a photo looks: plain even border and no skin anywhere */
 function shotStats(img){
@@ -1044,7 +1096,7 @@ async function pickProductShot(urls, kind){
       if(cl.cut && b.y0 > .03 && b.y1 < .97 && b.x0 > .02 && b.x1 < .98) score += 2;   // floats on the background
       if(cl.cut && h < .9) score += 1;
       if(cl.skin > .02 && cl.skin < .5) score -= 3;   // a person is in the photo
-      const st = shotStats(ph.img); if(st.even > .9) score += 1; else if(st.even < .6) score -= 1;
+      const st = shotStats(ph.img); if(st.even > .9) score += 1; else if(st.even < .75) score -= 2;   // studio and room shots have uneven edges
       if(st.skin > .03 && cl.skin < .5) score -= 3;   // a face, hands or legs anywhere
       if(score < 3) worn.push(ph.img);
       if(score > bestScore){ bestScore = score; best = blob; }
@@ -1053,8 +1105,12 @@ async function pickProductShot(urls, kind){
   }
   // the shop only shows it on a model: lift the garment off the cleanest of those photos
   if(bestScore < 3 && kind && worn.length){ let bp = 0, bc = null;
-    for(const im of worn){ try{ const c = segWorn(im, kind); if(c && c.purity > bp){ bp = c.purity; bc = c; } }catch(_){} }
-    if(bc && bp >= .95){ const b2 = await new Promise(r => bc.toBlob(r, "image/jpeg", .92)); if(b2) return b2; }
+    let tried = 0;
+    for(const im of worn){ if(tried >= 4) break; tried++;
+      try{ const ml = await mlMask(im); const c = segWorn(im, kind, ml);
+        if(c && c.purity >= (ml ? .96 : .95)){ bp = c.purity; bc = c; break; }   // the shop's first clean one is usually the front view
+        if(c && c.purity > bp){ bp = c.purity; bc = c; } }catch(_){} }
+    if(bc && bp >= .95){ const b2 = await new Promise(r => bc.toBlob(r, "image/jpeg", .92)); if(b2){ b2.__mask = bc.mask; return b2; } }
     return null;
   }
   return best;
@@ -1073,7 +1129,7 @@ async function getFromLink(){
     const kind = /trouser|pant|jean|shorts|skirt|chino|jogger|legging|cargo/i.test(words) ? "bottom" : /shoe|sneaker|boot|loafer|sandal|heel|slipper|dress|jumpsuit|bag/i.test(words) ? null : "top";
     const blob = await pickProductShot(pr.images, kind); if(!blob){ s0.onModel = true; throw new Error("no usable image"); }
     if(sheet !== s0) return;
-    const extra = {...(kind ? {category:kind} : {}), toBuy:true, link:safeUrl(page.url) || url, shop:shopName(page.url || url), price:pr.price.slice(0,20), brand:pr.brand.slice(0,30), name:pr.title.slice(0,40).replace(/[\s,;:|/–-]+$/, "")};
+    const extra = {...(blob.__mask ? {__mask:blob.__mask} : {}), ...(kind ? {category:kind} : {}), toBuy:true, link:safeUrl(page.url) || url, shop:shopName(page.url || url), price:pr.price.slice(0,20), brand:pr.brand.slice(0,30), name:pr.title.slice(0,40).replace(/[\s,;:|/–-]+$/, "")};
     if(s0.forId){ sheet = null; renderSheet(); await replacePhoto(s0.forId, blob); }
     else { sheet = null; renderSheet(); await onPhoto(blob, extra); }
   }catch(e){
@@ -1111,7 +1167,7 @@ if(nativeHttp()) setTimeout(() => { try{ const last = +localStorage.getItem("pmf
 async function replacePhoto(id, file){
   const it = store.item(id); if(!it || !file) return;
   let ph; try{ ph = await fileToPhoto(file); }catch(e){ toast("That file is not a photo I can open."); return; }
-  let cl = null; try{ cl = cleanPhoto(ph.img); }catch(_){}
+  let cl = null; const ml = file.__mask || await mlMask(ph.img); try{ cl = cleanPhoto(ph.img, ml); }catch(_){ try{ cl = cleanPhoto(ph.img); }catch(__){} }
   if(!cl || !cl.cut){ toast("That photo was too busy to cut out. Try one on a plain background."); return; }
   const {id:_, ...rest} = it; await store.put(id, {...rest, img:cl.img, cutout:cl.cutout, fabric:cl.fabric}); render(); toast("Photo updated.");
 }
