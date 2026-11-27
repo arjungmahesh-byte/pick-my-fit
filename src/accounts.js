@@ -138,7 +138,7 @@
       bg.querySelectorAll("[data-stop]").forEach(b => b.onclick = async () => { await db.collection("invites").doc(b.dataset.stop).set({revoked: true}, {merge: true}).catch(() => {}); again(); });
       bg.querySelectorAll("[data-remove]").forEach(b => b.onclick = async () => { await db.collection("users").doc(b.dataset.remove).delete().catch(() => {}); again(); });
       bg.querySelectorAll("[data-share]").forEach(b => b.onclick = async () => {
-        const text = `Join me on Pick My Fit! Open https://arjungmahesh-byte.github.io/pick-my-fit/ and use invite code ${b.dataset.share}`;
+        const text = `Join me on Pick My Fit! 👕\n\niPhone: open https://arjungmahesh-byte.github.io/pick-my-fit/ in Safari, tap Share → Add to Home Screen.\nAndroid: download the app from https://github.com/arjungmahesh-byte/pick-my-fit/releases/latest\n\nMy invite code: ${b.dataset.share}`;
         try { if (navigator.share) await navigator.share({text}); else { await navigator.clipboard.writeText(text); b.textContent = "Copied"; } } catch (_) {} });
       wire();
     } catch (e) { draw(`<p>Couldn't load users. Check the Firestore rules in docs/ACCOUNTS.md.</p>`); wire(); }
